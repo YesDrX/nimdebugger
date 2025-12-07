@@ -1,0 +1,96 @@
+{
+  "name": "nim-debugger",
+  "displayName": "Nim Debugger",
+  "description": "Native debugging support for Nim with automatic symbol demangling",
+  "version": "0.1.0",
+  "publisher": "yesdrx",
+  "author": {
+    "name": "yesdrx"
+  },
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Debuggers"
+  ],
+  "keywords": [
+    "nim",
+    "debug",
+    "debugger",
+    "gdb",
+    "native"
+  ],
+  "activationEvents": [
+    "onDebugInitialConfigurations",
+    "workspaceContains:**/*.nim"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "nim-debugger.installDebugger",
+        "title": "Nim: Install nim-debugger-mi"
+      },
+      {
+        "command": "nim-debugger.checkInstallation",
+        "title": "Nim: Check nim-debugger-mi Installation"
+      }
+    ],
+    "debuggers": [
+      {
+        "type": "nim",
+        "label": "Nim Debugger",
+        "languages": ["nim"],
+        "configurationSnippets": [
+          {
+            "label": "Nim: Debug (Native)",
+            "description": "Debug a Nim program using native debugging with symbol demangling",
+            "body": {
+              "type": "cppdbg",
+              "request": "launch",
+              "name": "Debug Nim (Native)",
+              "program": "^\"\\${workspaceFolder}/\\${fileBasenameNoExtension}\"",
+              "args": [],
+              "stopAtEntry": false,
+              "cwd": "^\"\\${workspaceFolder}\"",
+              "environment": [],
+              "externalConsole": false,
+              "MIMode": "gdb",
+              "miDebuggerPath": "nim_debugger_mi",
+              "setupCommands": [
+                {
+                  "description": "Enable pretty-printing for gdb",
+                  "text": "-enable-pretty-printing",
+                  "ignoreFailures": true
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts"
+  },
+  "devDependencies": {
+    "@types/node": "^18.0.0",
+    "@types/vscode": "^1.80.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "eslint": "^8.0.0",
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {},
+  "extensionDependencies": [
+    "ms-vscode.cpptools"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/YesDrX/nimdebugger"
+  }
+}
