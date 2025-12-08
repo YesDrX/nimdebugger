@@ -42,7 +42,8 @@ Add to your `.vscode/launch.json`:
     "type": "cppdbg",
     "request": "launch",
     "program": "${workspaceFolder}/${fileBasenameNoExtension}",
-    "miDebuggerPath": "~/.nimble/bin/nim_debugger_mi",
+    "miDebuggerPath": "nim_debugger_mi",
+    "miDebuggerArgs": "", // you may specify gdb path by --gdb-path=/path/to/your/gdb
     "MIMode": "gdb",
     "args": [],
     "cwd": "${workspaceFolder}"
@@ -56,8 +57,8 @@ Add to your `.vscode/launch.json`:
         "type": "cppdbg",
         "request": "launch",
         "program": "${workspaceFolder}/.vscode/tmp",
-        "miDebuggerPath": "~/.nimble/bin/nim_debugger_mi",
-        "miDebuggerArgs": "--debug --lldb --lldb-path ~/.vscode/extensions/ms-vscode.cpptools-1.29.2-darwin-arm64/debugAdapters/lldb-mi/bin/lldb-mi", //make sure MS CppTools is installed and the path is correct (user your own version and path)
+        "miDebuggerPath": "nim_debugger_mi",
+        "miDebuggerArgs": "--lldb", //if --lldb is specified, it will try to load lldb-mi from ms-vscode.cpptools; you may specify --lldb-path as well
         "MIMode": "lldb",
         "args": [],
         "cwd": "${workspaceFolder}",

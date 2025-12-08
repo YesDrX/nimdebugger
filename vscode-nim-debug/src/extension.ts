@@ -64,19 +64,14 @@ class NimDebugConfigurationProvider implements vscode.DebugConfigurationProvider
         if (os.platform() === 'darwin') {
             const cppTools = vscode.extensions.getExtension('ms-vscode.cpptools');
             if (cppTools) {
-                const lldbMiPath = path.join(cppTools.extensionPath, 'debugAdapters', 'lldb-mi', 'bin', 'lldb-mi');
-                if (fs.existsSync(lldbMiPath)) {
-                    config.MIMode = 'lldb';
+                config.MIMode = 'lldb';
 
-                    let currentArgs = config.miDebuggerArgs || '';
-                    if (Array.isArray(currentArgs)) {
-                        currentArgs = currentArgs.join(' ');
-                    }
-
-                    if (!currentArgs.includes('--lldb-path')) {
-                        config.miDebuggerArgs = `${currentArgs} --lldb --lldb-path "${lldbMiPath}"`.trim();
-                    }
+                let currentArgs = config.miDebuggerArgs || '';
+                if (Array.isArray(currentArgs)) {
+                    currentArgs = currentArgs.join(' ');
                 }
+                
+                config.miDebuggerArgs = `${currentArgs} --lldb`;
             }
         }
 

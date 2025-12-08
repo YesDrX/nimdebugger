@@ -30,7 +30,8 @@ Install the ["Nim Debugger"](https://marketplace.visualstudio.com/items?itemName
     "type": "cppdbg",
     "request": "launch",
     "program": "${workspaceFolder}/${fileBasenameNoExtension}",
-    "miDebuggerPath": "~/.nimble/bin/nim_debugger_mi",
+    "miDebuggerPath": "nim_debugger_mi",
+    "miDebuggerArgs": "", // you may specify gdb path by --gdb-path=/path/to/your/gdb
     "MIMode": "gdb",
     "args": [],
     "cwd": "${workspaceFolder}"
@@ -39,6 +40,7 @@ Install the ["Nim Debugger"](https://marketplace.visualstudio.com/items?itemName
 
 #### Mac (Apple Silicon)
 ```json
+<<<<<<< HEAD
 {
     "name": "Debug Nim",
     "type": "cppdbg",
@@ -51,9 +53,23 @@ Install the ["Nim Debugger"](https://marketplace.visualstudio.com/items?itemName
     "cwd": "${workspaceFolder}",
     "stopAtEntry": true
 }
+=======
+    {
+        "name": "Debug Nim",
+        "type": "cppdbg",
+        "request": "launch",
+        "program": "${workspaceFolder}/.vscode/tmp",
+        "miDebuggerPath": "nim_debugger_mi",
+        "miDebuggerArgs": "--lldb", //if --lldb is specified, it will try to load lldb-mi from ms-vscode.cpptools; you may specify --lldb-path as well
+        "MIMode": "lldb",
+        "args": [],
+        "cwd": "${workspaceFolder}",
+        "stopAtEntry": true
+    }
+>>>>>>> 9570551 (lldb)
 ```
 
-### Windows(MingW)
+### Windows (MingW)
 ```json
 
 ```

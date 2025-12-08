@@ -2,12 +2,13 @@ import os, strutils
 
 import posix
 import symbol_map, mi_transformer, process
+import glob
 
 const BUFFER_SIZE = 8192
 
 proc main() =
   var debugger = "gdb"
-  var gdbPath = "gdb"
+  var gdbPath = ""
   var programPath = ""
   var symbolsPath = ""
   var gdbArgs: seq[string] = @[]
@@ -20,17 +21,24 @@ proc main() =
     let arg = args[i]
     if arg == "--gdb":
       debugger = "gdb"
+      gdbPath = "gdb"
     elif arg == "--lldb":
       debugger = "lldb"
-      gdbPath = "lldb"
+      for lldb_mi in walkGlob("~/.vscode/extensions/ms-vscode.cpptools-*/**/lldb-mi".expandTilde):
+        gdbPath = lldb_mi
+        stderr.writeLine("Found lldb-mi: " & gdbPath)
+        stderr.flushFile()
+        break
+      if gdbPath == "":
+        gdbPath = "lldb-mi"
     elif arg == "--gdb-path":
       inc i
       if i < args.len:
-        gdbPath = args[i]
+        gdbPath = args[i].expandTilde
     elif arg == "--lldb-path":
       inc i
       if i < args.len:
-        gdbPath = args[i]
+        gdbPath = args[i].expandTilde
     elif arg == "--debug":
       debugMode = true
     elif arg.startsWith("--"):
