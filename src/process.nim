@@ -1,49 +1,67 @@
+# process.nim
+when defined(windows):
+  {.compile: "process_windows.c".}
+  {.passC: "-D_WIN32 -DWIN32_LEAN_AND_MEAN".}
+else:
+  {.compile: "process.c".}
 
-{.compile: "process.c".}
-import sequtils, sugar, os, strutils, posix
+when defined(windows):
+  import winlean
+  # Define Windows API constants and types
+  type
+    WINBOOL = int32
+    LPOVERLAPPED = pointer
+  
+  # Declare Windows API functions with correct signatures
+  proc ReadFile(hFile: Handle, lpBuffer: pointer, nNumberOfBytesToRead: DWORD,
+                lpNumberOfBytesRead: ptr DWORD, lpOverlapped: LPOVERLAPPED): WINBOOL {.stdcall, dynlib: "kernel32", importc: "ReadFile".}
+  
+  proc WriteFile(hFile: Handle, lpBuffer: pointer, nNumberOfBytesToWrite: DWORD,
+                 lpNumberOfBytesWritten: ptr DWORD, lpOverlapped: LPOVERLAPPED): WINBOOL {.stdcall, dynlib: "kernel32", importc: "WriteFile".}
+  
+  proc FlushFileBuffers(hFile: Handle): WINBOOL {.stdcall, dynlib: "kernel32", importc: "FlushFileBuffers".}
+  
+  proc GetExitCodeProcess(hProcess: Handle, lpExitCode: ptr DWORD): WINBOOL {.stdcall, dynlib: "kernel32", importc: "GetExitCodeProcess".}
+  
+  proc WaitForSingleObject(hHandle: Handle, dwMilliseconds: DWORD): DWORD {.stdcall, dynlib: "kernel32", importc: "WaitForSingleObject".}
+  
+  proc CloseHandle(hObject: Handle): WINBOOL {.stdcall, dynlib: "kernel32", importc: "CloseHandle".}
+  
+  const
+    STILL_ACTIVE = 259.DWORD
+else:
+  import posix
 
-type
-  ProcessHandle* = object
-    pid*: cint
-    input_fd*: cint
-    output_fd*: cint
-    error_fd*: cint
+when defined(windows):
+  type
+    ProcessHandle* = object
+      pid*: DWORD
+      hProcess*: Handle
+      input_fd*: Handle
+      output_fd*: Handle
+      error_fd*: Handle
+else:
+  type
+    ProcessHandle* = object
+      pid*: cint
+      input_fd*: cint
+      output_fd*: cint
+      error_fd*: cint
 
 proc start_process(cmd: cstring, args: ptr cstring): ptr ProcessHandle {.importc.}
 proc close_process(handle: ptr ProcessHandle) {.importc.}
 proc is_running(handle: ptr ProcessHandle): bool {.importc.}
 proc write_to_process(handle: ptr ProcessHandle, data: cstring, length: cint): cint {.importc.}
-# We might not strictly need the polling readers if we use selectors, but we include them for completeness if needed
 proc read_from_output(handle: ptr ProcessHandle, buffer: cstring, buffer_size: cint, timeout_ms: cint): cint {.importc.}
 proc read_from_error(handle: ptr ProcessHandle, buffer: cstring, buffer_size: cint, timeout_ms: cint): cint {.importc.}
+proc read_available(handle: ptr ProcessHandle, buffer: cstring, buffer_size: cint, timeout_ms: cint, source: ptr cint): cint {.importc.}
 
 type
   Process* = ref object
     handle*: ptr ProcessHandle
 
 proc newProcess*(cmd: string, args: openArray[string]): Process =
-  # Convert args to C format (null-terminated array of strings, ending with NULL)
-  # process.c expects `char** args`.
-  # We need to construct a seq of cstrings, and then pass the address of the first element.
-  # The array must be null-terminated? `execvp` expects a NULL terminated array.
-  # wrapper in tmp.nim:
-  # var all_args = @[cmd] & @args
-  # var all_args_cstring = all_args.map(it => it.cstring)
-  # let handle = start_process(cmd.cstring, all_args_cstring[0].addr)
-  
-  # Wait, one detail: `all_args_cstring` needs to be NULL terminated for execvp.
-  # The tmp.nim implementation:
-  #   var all_args_cstring = all_args.map(it => it.cstring)
-  # It doesn't explicitly add `nil`.
-  # `seq` in Nim might not be implicitly NULL terminated in a way C expects for `char**`.
-  # However, `process.c` calls `execvp(cmd, args)`. 
-  # If `tmp.nim` worked, maybe I should stick to it. But `map` returns a seq. 
-  # If I pass `addr` of 0th element, I get `char**`. But it needs to end with NULL.
-  # `tmp.nim` might have been lucky or strict Nim memory layout is coincidentally zero after the seq buffer? Unlikely.
-  # I should verify `process.c`.
-  # `execvp` iterates args until NULL.
-  # I will add `cstring(nil)` to be safe.
-  
+  # Convert args to C format (null-terminated array)
   var all_args = @[cmd] & @args
   var cargs = newSeq[cstring](all_args.len + 1)
   for i, arg in all_args:
@@ -59,6 +77,8 @@ proc newProcess*(cmd: string, args: openArray[string]): Process =
 proc write*(p: Process, data: string): int =
   if p.handle == nil: return -1
   let written = write_to_process(p.handle, data.cstring, data.len.cint)
+  if written < 0:
+    raise newException(IOError, "Failed to write to process")
   return written
 
 proc close*(p: Process) =
@@ -71,7 +91,11 @@ proc isRunning*(p: Process): bool =
   return is_running(p.handle)
 
 proc pid*(p: Process): int =
-  if p.handle != nil: return p.handle.pid
+  if p.handle != nil:
+    when defined(windows):
+      return p.handle.pid.int
+    else:
+      return p.handle.pid.int
   return 0
 
 proc readOutput*(p: Process, timeoutMs: int): string =
@@ -90,15 +114,51 @@ proc readError*(p: Process, timeoutMs: int): string =
   else:
     result = ""
 
-# IO Accessors for Selectors
-proc inputHandle*(p: Process): cint = p.handle.input_fd
-proc outputHandle*(p: Process): cint = p.handle.output_fd
-proc errorHandle*(p: Process): cint = p.handle.error_fd
+# IO Accessors for compatibility with existing code
+when defined(windows):
+  proc inputHandle*(p: Process): Handle = 
+    if p.handle != nil: p.handle.input_fd else: Handle(0)
+  
+  proc outputHandle*(p: Process): Handle = 
+    if p.handle != nil: p.handle.output_fd else: Handle(0)
+  
+  proc errorHandle*(p: Process): Handle = 
+    if p.handle != nil: p.handle.error_fd else: Handle(0)
+  
+  # Direct read helpers for Windows
+  proc readOutputDirect*(p: Process, buffer: pointer, len: int): int =
+    var bytesRead: DWORD = 0
+    if p.handle != nil and p.handle.output_fd != Handle(0):
+      let success = ReadFile(p.handle.output_fd, buffer, len.DWORD, addr bytesRead, nil)
+      if success != 0:  # WINBOOL success (non-zero means success)
+        return bytesRead.int
+    return -1
+  
+  proc readErrorDirect*(p: Process, buffer: pointer, len: int): int =
+    var bytesRead: DWORD = 0
+    if p.handle != nil and p.handle.error_fd != Handle(0):
+      let success = ReadFile(p.handle.error_fd, buffer, len.DWORD, addr bytesRead, nil)
+      if success != 0:  # WINBOOL success (non-zero means success)
+        return bytesRead.int
+    return -1
 
-# Direct read helpers (without internal polling)
-# Since the FDs are non-blocking, we can just read.
-proc readOutputDirect*(p: Process, buffer: pointer, len: int): int =
-  return posix.read(p.handle.output_fd, buffer, len)
-
-proc readErrorDirect*(p: Process, buffer: pointer, len: int): int =
-  return posix.read(p.handle.error_fd, buffer, len)
+else:
+  proc inputHandle*(p: Process): cint = 
+    if p.handle != nil: p.handle.input_fd else: -1
+  
+  proc outputHandle*(p: Process): cint = 
+    if p.handle != nil: p.handle.output_fd else: -1
+  
+  proc errorHandle*(p: Process): cint = 
+    if p.handle != nil: p.handle.error_fd else: -1
+  
+  # Direct read helpers for Unix
+  proc readOutputDirect*(p: Process, buffer: pointer, len: int): int =
+    if p.handle != nil:
+      return posix.read(p.handle.output_fd, buffer, len)
+    return -1
+  
+  proc readErrorDirect*(p: Process, buffer: pointer, len: int): int =
+    if p.handle != nil:
+      return posix.read(p.handle.error_fd, buffer, len)
+    return -1

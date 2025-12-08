@@ -1,14 +1,18 @@
-// process.h
-#ifndef PROCESS_H
-#define PROCESS_H
+// process_windows.h
+#ifndef PROCESS_WINDOWS_H
+#define PROCESS_WINDOWS_H
 
-#include <sys/types.h> // for pid_t
+#ifdef _WIN32
+
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
 
 typedef struct {
-    pid_t pid;
-    int input_fd;   // File descriptor for writing to child's stdin
-    int output_fd;  // File descriptor for reading from child's stdout
-    int error_fd;   // File descriptor for reading from child's stderr
+    DWORD pid;
+    HANDLE hProcess;     // Process handle for waiting and status
+    HANDLE input_fd;     // Handle for writing to child's stdin
+    HANDLE output_fd;    // Handle for reading from child's stdout  
+    HANDLE error_fd;     // Handle for reading from child's stderr
 } ProcessHandle;
 
 // Create a process with redirected I/O
@@ -32,4 +36,6 @@ int read_from_error(ProcessHandle* handle, char* buffer, int buffer_size, int ti
 // Read from either stdout or stderr (whichever has data)
 int read_available(ProcessHandle* handle, char* buffer, int buffer_size, int timeout_ms, int* source);
 
-#endif
+#endif // _WIN32
+
+#endif // PROCESS_WINDOWS_H
