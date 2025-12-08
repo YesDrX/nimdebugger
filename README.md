@@ -21,7 +21,7 @@ nimble install nim_debugger_mi
 
 ### With VSCode
 
-Install the "Nim Debugger" VSCode extension for automatic configuration, or manually configure your `launch.json`:
+Install the ["Nim Debugger"](https://marketplace.visualstudio.com/items?itemName=YesDrX.nim-debugger) VSCode extension for automatic configuration, or manually configure your `launch.json`:
 
 ```json
 {
