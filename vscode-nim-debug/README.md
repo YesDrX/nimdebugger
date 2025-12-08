@@ -56,7 +56,7 @@ Add to your `.vscode/launch.json`:
         "name": "Debug Nim",
         "type": "cppdbg",
         "request": "launch",
-        "program": "${workspaceFolder}/.vscode/tmp",
+        "program": "${workspaceFolder}/${fileBasenameNoExtension}",
         "miDebuggerPath": "nim_debugger_mi",
         "miDebuggerArgs": "--lldb", //if --lldb is specified, it will try to load lldb-mi from ms-vscode.cpptools; you may specify --lldb-path as well
         "MIMode": "lldb",
