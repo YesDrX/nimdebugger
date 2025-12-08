@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as child_process from 'child_process';
 import * as path from 'path';
 import * as os from 'os';
+import * as fs from 'fs';
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('Nim Debugger extension activated');
@@ -24,7 +25,7 @@ export function activate(context: vscode.ExtensionContext) {
     );
 }
 
-export function deactivate() {}
+export function deactivate() { }
 
 class NimDebugConfigurationProvider implements vscode.DebugConfigurationProvider {
     async resolveDebugConfiguration(
@@ -32,7 +33,7 @@ class NimDebugConfigurationProvider implements vscode.DebugConfigurationProvider
         config: vscode.DebugConfiguration,
         token?: vscode.CancellationToken
     ): Promise<vscode.DebugConfiguration | undefined> {
-        
+
         // If no miDebuggerPath specified, try to find it
         if (!config.miDebuggerPath || config.miDebuggerPath === 'nim_debugger_mi') {
             const debuggerPath = await findNimDebuggerMi();
@@ -44,7 +45,7 @@ class NimDebugConfigurationProvider implements vscode.DebugConfigurationProvider
                     'nim-debugger-mi is not installed. Install it now?',
                     'Install', 'Cancel'
                 );
-                
+
                 if (choice === 'Install') {
                     await installNimDebuggerMi();
                     const newPath = await findNimDebuggerMi();
@@ -55,6 +56,26 @@ class NimDebugConfigurationProvider implements vscode.DebugConfigurationProvider
                     }
                 } else {
                     return undefined; // Cancel debugging
+                }
+            }
+        }
+
+        // Auto-detect cpptools on macOS and configure lldb-mi
+        if (os.platform() === 'darwin') {
+            const cppTools = vscode.extensions.getExtension('ms-vscode.cpptools');
+            if (cppTools) {
+                const lldbMiPath = path.join(cppTools.extensionPath, 'debugAdapters', 'lldb-mi', 'bin', 'lldb-mi');
+                if (fs.existsSync(lldbMiPath)) {
+                    config.MIMode = 'lldb';
+
+                    let currentArgs = config.miDebuggerArgs || '';
+                    if (Array.isArray(currentArgs)) {
+                        currentArgs = currentArgs.join(' ');
+                    }
+
+                    if (!currentArgs.includes('--lldb-path')) {
+                        config.miDebuggerArgs = `${currentArgs} --lldb --lldb-path "${lldbMiPath}"`.trim();
+                    }
                 }
             }
         }
@@ -113,11 +134,11 @@ function exec(command: string): Promise<string> {
 async function installNimDebuggerMi() {
     const terminal = vscode.window.createTerminal('Install nim-debugger-mi');
     terminal.show();
-    
+
     // Try package name first, then GitHub URL as fallback
     terminal.sendText('echo "Attempting to install nim_debugger_mi from nimble packages..."');
     terminal.sendText('nimble install nim_debugger_mi -y || (echo "Package not found, installing from GitHub..." && nimble install https://github.com/YesDrX/nimdebugger -y)');
-    
+
     vscode.window.showInformationMessage(
         'Installing nim-debugger-mi... Please wait for the installation to complete in the terminal.'
     );
@@ -125,7 +146,7 @@ async function installNimDebuggerMi() {
 
 async function checkNimDebuggerMiInstallation() {
     const debuggerPath = await findNimDebuggerMi();
-    
+
     if (debuggerPath) {
         vscode.window.showInformationMessage(
             `nim-debugger-mi is installed at: ${debuggerPath}`
@@ -135,7 +156,7 @@ async function checkNimDebuggerMiInstallation() {
             'nim-debugger-mi is not installed. Would you like to install it?',
             'Install', 'Later'
         );
-        
+
         if (choice === 'Install') {
             await installNimDebuggerMi();
         }

@@ -23,11 +23,12 @@ nimble install nim_debugger_mi
 
 Install the ["Nim Debugger"](https://marketplace.visualstudio.com/items?itemName=YesDrX.nim-debugger) VSCode extension for automatic configuration, or manually configure your `launch.json`:
 
+#### Linux/WSL
 ```json
 {
+    "name": "Debug Nim",
     "type": "cppdbg",
     "request": "launch",
-    "name": "Debug Nim",
     "program": "${workspaceFolder}/${fileBasenameNoExtension}",
     "miDebuggerPath": "~/.nimble/bin/nim_debugger_mi",
     "MIMode": "gdb",
@@ -35,6 +36,28 @@ Install the ["Nim Debugger"](https://marketplace.visualstudio.com/items?itemName
     "cwd": "${workspaceFolder}"
 }
 ```
+
+#### Mac (Apple Silicon)
+```json
+    {
+        "name": "Debug Nim",
+        "type": "cppdbg",
+        "request": "launch",
+        "program": "${workspaceFolder}/.vscode/tmp",
+        "miDebuggerPath": "~/.nimble/bin/nim_debugger_mi",
+        "miDebuggerArgs": "--debug --lldb --lldb-path ~/.vscode/extensions/ms-vscode.cpptools-1.29.2-darwin-arm64/debugAdapters/lldb-mi/bin/lldb-mi", //make sure MS CppTools is installed and the path is correct (user your own version and path)
+        "MIMode": "lldb",
+        "args": [],
+        "cwd": "${workspaceFolder}",
+        "stopAtEntry": true
+    }
+```
+
+### Windows(MingW)
+```json
+
+```
+
 
 before starting debugging, you should build your binary with debuginfo:
 ```bash

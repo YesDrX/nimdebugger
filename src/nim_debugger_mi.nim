@@ -6,6 +6,7 @@ import symbol_map, mi_transformer, process
 const BUFFER_SIZE = 8192
 
 proc main() =
+  var debugger = "gdb"
   var gdbPath = "gdb"
   var programPath = ""
   var symbolsPath = ""
@@ -17,7 +18,16 @@ proc main() =
   var i = 0
   while i < args.len:
     let arg = args[i]
-    if arg == "--gdb-path":
+    if arg == "--gdb":
+      debugger = "gdb"
+    elif arg == "--lldb":
+      debugger = "lldb"
+      gdbPath = "lldb"
+    elif arg == "--gdb-path":
+      inc i
+      if i < args.len:
+        gdbPath = args[i]
+    elif arg == "--lldb-path":
       inc i
       if i < args.len:
         gdbPath = args[i]
@@ -35,35 +45,39 @@ proc main() =
         gdbArgs.add(arg)
     inc i
 
+  stderr.writeLine("Nim Debugger MI Proxy")
+  stderr.writeLine("Input args: " & args.join(" "))
+  stderr.flushFile()
+
   # Load symbol map
   let sm = newSymbolMap()
   if symbolsPath != "":
     if debugMode:
       stderr.writeLine("Loading custom symbol map from: " & symbolsPath)
-    sm.loadFromJson(symbolsPath)
+    discard sm.loadFromFile(symbolsPath)
   elif programPath != "":
     if debugMode:
       stderr.writeLine("Loading symbols from: " & programPath)
-    sm.loadFromNm(programPath)
+    discard sm.loadFromBinary(programPath)
 
   # Build GDB command
   if debugMode:
-    stderr.writeLine("Starting GDB: " & gdbPath & " " & gdbArgs.join(" "))
+    stderr.writeLine("Starting Debugger: " & gdbPath & " " & gdbArgs.join(" "))
 
   # Start GDB process
   var p: Process
   try:
     p = newProcess(gdbPath, gdbArgs)
   except Exception as e:
-    stderr.writeLine("Failed to start GDB: " & e.msg)
+    stderr.writeLine("Failed to start Debugger: " & e.msg)
     quit(1)
 
   if not p.isRunning:
-    stderr.writeLine("Failed to start GDB process (not running)!")
+    stderr.writeLine("Failed to start Debugger process (not running)!")
     quit(1)
 
   if debugMode:
-    stderr.writeLine("GDB PID: " & $p.pid)
+    stderr.writeLine("Debugger PID: " & $p.pid)
     stderr.writeLine("Proxy started. Entering I/O loop...")
   
   # UNIFIED LOOP FOR BOTH PLATFORMS
@@ -101,7 +115,7 @@ proc main() =
           if fileExists(path):
             if debugMode:
               stderr.writeLine("Dynamically loading symbols from: " & path)
-            sm.loadFromNm(path)
+            discard sm.loadFromBinary(path)
       
       try:
         if debugMode:
@@ -127,7 +141,7 @@ proc main() =
           stdout.write("\n"); stdout.flushFile(); continue
         
         try:
-          let transformed = transformOutput(rawLine, sm, debugMode)
+          let transformed = transformOutput(rawLine, sm, debug = debugMode)
           if debugMode:
             stderr.writeLine("Transformed Output: " & transformed)
           stdout.write(transformed & "\n")

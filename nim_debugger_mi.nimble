@@ -1,8 +1,8 @@
 # Package
 
-version       = "0.1.0"
+version       = "0.2.0"
 author        = "yesdrx"
-description   = "GDB/MI proxy for Nim that handles symbol mangling/demangling"
+description   = "GDB/LLDB/MI proxy for Nim that handles symbol mangling/demangling"
 license       = "MIT"
 srcDir        = "src"
 bin           = @["nim_debugger_mi"]
