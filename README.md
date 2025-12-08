@@ -30,7 +30,7 @@ Install the ["Nim Debugger"](https://marketplace.visualstudio.com/items?itemName
     "type": "cppdbg",
     "request": "launch",
     "program": "${workspaceFolder}/${fileBasenameNoExtension}",
-    "miDebuggerPath": "nim_debugger_mi",
+    "miDebuggerPath": "${userHome}/.nimble/bin/nim_debugger_mi",
     "miDebuggerArgs": "", // you may specify gdb path by --gdb-path=/path/to/your/gdb
     "MIMode": "gdb",
     "args": [],
@@ -45,12 +45,11 @@ Install the ["Nim Debugger"](https://marketplace.visualstudio.com/items?itemName
         "type": "cppdbg",
         "request": "launch",
         "program": "${workspaceFolder}/${fileBasenameNoExtension}",
-        "miDebuggerPath": "nim_debugger_mi",
+        "miDebuggerPath": "${userHome}/.nimble/bin/nim_debugger_mi",
         "miDebuggerArgs": "--lldb", //if --lldb is specified, it will try to load lldb-mi from ms-vscode.cpptools; you may specify --lldb-path as well
         "MIMode": "lldb",
         "args": [],
-        "cwd": "${workspaceFolder}",
-        "stopAtEntry": true
+        "cwd": "${workspaceFolder}"
     }
 ```
 
