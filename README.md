@@ -39,18 +39,18 @@ Install the ["Nim Debugger"](https://marketplace.visualstudio.com/items?itemName
 
 #### Mac (Apple Silicon)
 ```json
-    {
-        "name": "Debug Nim",
-        "type": "cppdbg",
-        "request": "launch",
-        "program": "${workspaceFolder}/.vscode/tmp",
-        "miDebuggerPath": "~/.nimble/bin/nim_debugger_mi",
-        "miDebuggerArgs": "--debug --lldb --lldb-path ~/.vscode/extensions/ms-vscode.cpptools-1.29.2-darwin-arm64/debugAdapters/lldb-mi/bin/lldb-mi", //make sure MS CppTools is installed and the path is correct (user your own version and path)
-        "MIMode": "lldb",
-        "args": [],
-        "cwd": "${workspaceFolder}",
-        "stopAtEntry": true
-    }
+{
+    "name": "Debug Nim",
+    "type": "cppdbg",
+    "request": "launch",
+    "program": "${workspaceFolder}/.vscode/tmp",
+    "miDebuggerPath": "~/.nimble/bin/nim_debugger_mi",
+    "miDebuggerArgs": "--debug --lldb --lldb-path ~/.vscode/extensions/ms-vscode.cpptools-1.29.2-darwin-arm64/debugAdapters/lldb-mi/bin/lldb-mi", //make sure MS CppTools is installed and the path is correct (user your own version and path)
+    "MIMode": "lldb",
+    "args": [],
+    "cwd": "${workspaceFolder}",
+    "stopAtEntry": true
+}
 ```
 
 ### Windows(MingW)
