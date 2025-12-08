@@ -7,9 +7,11 @@ A GDB/MI proxy for Nim that provides transparent symbol mangling/demangling for 
 - **Transparent Symbol Translation**: Automatically demangles Nim symbols in GDB output and mangles user input
 - **Function Name Demangling**: Shows readable function names in call stacks (both Nim and C++ styles)
 - **Internal Variable Renaming**: Displays compiler-generated variables with readable names
-- **Native Debugging**: Works with standard GDB/LLDB(#TBA) through the MI protocol
+- **Native Debugging**: Works with standard GDB/LLDB through the MI protocol
 - **VSCode Integration**: Seamless integration with VSCode's native debugger
 - **WINDOWS IS NOT SUPPORTED**: That is a feature
+
+## TODO: wrap around msvscode-cpptools DAP
 
 ## Installation
 
