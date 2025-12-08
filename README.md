@@ -7,8 +7,9 @@ A GDB/MI proxy for Nim that provides transparent symbol mangling/demangling for 
 - **Transparent Symbol Translation**: Automatically demangles Nim symbols in GDB output and mangles user input
 - **Function Name Demangling**: Shows readable function names in call stacks (both Nim and C++ styles)
 - **Internal Variable Renaming**: Displays compiler-generated variables with readable names
-- **Native Debugging**: Works with standard GDB/LLDB through the MI protocol
+- **Native Debugging**: Works with standard GDB/LLDB(#TBA) through the MI protocol
 - **VSCode Integration**: Seamless integration with VSCode's native debugger
+- **WINDOWS IS NOT SUPPORTED**: That is a feature
 
 ## Installation
 
@@ -35,15 +36,11 @@ Install the "Nim Debugger" VSCode extension for automatic configuration, or manu
 }
 ```
 
-### Standalone
-
+before starting debugging, you should build your binary with debuginfo:
 ```bash
-# Start the proxy
-nim_debugger_mi --interpreter=mi ./your_program
-
-# With debug logging
-nim_debugger_mi --debug --interpreter=mi ./your_program
+nim c --debuginfo -d:debug --debugger:native ./src/main.nim
 ```
+
 
 ## How It Works
 
