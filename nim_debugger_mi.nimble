@@ -1,6 +1,6 @@
 # Package
 
-version       = "0.2.3"
+version       = "0.2.4"
 author        = "yesdrx"
 description   = "GDB/LLDB/MI proxy for Nim that handles symbol mangling/demangling"
 license       = "MIT"

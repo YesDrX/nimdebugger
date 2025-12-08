@@ -35,8 +35,8 @@ class NimDebugConfigurationProvider implements vscode.DebugConfigurationProvider
     ): Promise<vscode.DebugConfiguration | undefined> {
 
         // If no miDebuggerPath specified, try to find it
-        if (!config.miDebuggerPath || config.miDebuggerPath === 'nim_debugger_mi') {
-            const debuggerPath = await findNimDebuggerMi();
+        if (!config.miDebuggerPath || config.miDebuggerPath.includes('nim_debugger_mi')) {
+            const debuggerPath = await findNimDebuggerMi(config.miDebuggerPath);
             if (debuggerPath) {
                 config.miDebuggerPath = debuggerPath;
             } else {
@@ -59,7 +59,7 @@ class NimDebugConfigurationProvider implements vscode.DebugConfigurationProvider
                 }
             }
         }
-
+        
         // Auto-detect cpptools on macOS and configure lldb-mi
         if (os.platform() === 'darwin') {
             const cppTools = vscode.extensions.getExtension('ms-vscode.cpptools');
@@ -79,10 +79,11 @@ class NimDebugConfigurationProvider implements vscode.DebugConfigurationProvider
     }
 }
 
-async function findNimDebuggerMi(): Promise<string | null> {
+async function findNimDebuggerMi(nim_debugger_mi : string = "nim_debugger_mi"): Promise<string | null> {
     // Try common locations
     const possiblePaths = [
         path.join(os.homedir(), '.nimble', 'bin', 'nim_debugger_mi'),
+        nim_debugger_mi,
         'nim_debugger_mi' // Will use PATH
     ];
 
