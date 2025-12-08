@@ -14,7 +14,7 @@ A VSCode extension that provides seamless native debugging for Nim with automati
 
 - [Nim](https://nim-lang.org/) installed
 - [Nimble](https://github.com/nim-lang/nimble) package manager
-- [C/C++ Extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode.cpptools) for VSCode
+- **macOS only**: [C/C++ Extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode.cpptools) for VSCode (provides lldb-mi)
 
 ## Installation
 
