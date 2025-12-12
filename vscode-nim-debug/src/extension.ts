@@ -119,7 +119,8 @@ async function findNimDebuggerMi(nim_debugger_mi : string = "nim_debugger_mi"): 
     ];
 
     for (const p of possiblePaths) {
-        if (await commandExists(p)) {
+        if (fs.existsSync(p)) {
+            console.log(`Found nim_debugger_mi at: ${p}`);
             return p;
         }
     }
@@ -128,31 +129,73 @@ async function findNimDebuggerMi(nim_debugger_mi : string = "nim_debugger_mi"): 
     try {
         const result = await exec('which nim_debugger_mi');
         if (result.trim()) {
+            console.log(`Found nim_debugger_mi at: ${result.trim()}`);
             return result.trim();
         }
     } catch (e) {
         // Command failed, continue
     }
 
+    console.log('nim_debugger_mi not found');
+    
     return null;
 }
 
-async function commandExists(command: string): Promise<boolean> {
-    try {
-        await exec(`command -v ${command}`);
-        return true;
-    } catch (e) {
-        return false;
+function getNimblePath(): string {
+    // Try to get nimble path from Nim extension settings
+    const nimConfig = vscode.workspace.getConfiguration('nim');
+    const nimblePath = nimConfig.get<string>('nimblePath');
+    if (nimblePath) {
+        return nimblePath;
     }
+    
+    // Try from our own extension settings
+    const debugConfig = vscode.workspace.getConfiguration('nim-debugger');
+    const configNimblePath = debugConfig.get<string>('nimblePath');
+    if (configNimblePath) {
+        return configNimblePath;
+    }
+    
+    // Default to 'nimble' assuming it's in PATH
+    return 'nimble';
 }
 
 function exec(command: string): Promise<string> {
     return new Promise((resolve, reject) => {
-        child_process.exec(command, (error, stdout, stderr) => {
+        const isWindows = os.platform() === 'win32';
+        
+        // On Unix-like systems, source shell config files to get proper PATH
+        let execCommand = command;
+        if (!isWindows) {
+            // Try to source common shell configuration files
+            const shellConfigSources = [
+                'source ~/.bashrc 2>/dev/null || true',
+                'source ~/.bash_profile 2>/dev/null || true',
+                'source ~/.profile 2>/dev/null || true',
+                'source ~/.zshrc 2>/dev/null || true'
+            ].join('; ');
+            execCommand = `${shellConfigSources}; ${command}`;
+        }
+        
+        const options: child_process.ExecOptions = {
+            shell: isWindows ? 'powershell.exe' : '/bin/bash',
+            env: { ...process.env }
+        };
+        
+        // On Windows, add common nimble paths if not already in PATH
+        if (isWindows && options.env) {
+            const userProfile = process.env.USERPROFILE || '';
+            const nimbleBinPath = path.join(userProfile, '.nimble', 'bin');
+            if (!options.env.PATH?.includes(nimbleBinPath)) {
+                options.env.PATH = `${nimbleBinPath};${options.env.PATH || ''}`;
+            }
+        }
+        
+        child_process.exec(execCommand, options, (error, stdout, stderr) => {
             if (error) {
                 reject(error);
             } else {
-                resolve(stdout);
+                resolve(stdout.toString());
             }
         });
     });
@@ -214,7 +257,8 @@ async function checkForUpdatesIfNeeded(context: vscode.ExtensionContext) {
 
 async function getInstalledVersion(): Promise<string | null> {
     try {
-        const output = await exec('nimble dump nim_debugger_mi');
+        const nimble = getNimblePath();
+        const output = await exec(`"${nimble}" dump nim_debugger_mi`);
         // Parse output looking for: version: "X.Y.Z"
         const versionMatch = output.match(/version:\s*"([^"]+)"/);
         if (versionMatch && versionMatch[1]) {
@@ -229,7 +273,8 @@ async function getInstalledVersion(): Promise<string | null> {
 
 async function getLatestVersion(): Promise<string | null> {
     try {
-        const output = await exec('nimble search nim_debugger_mi --ver');
+        const nimble = getNimblePath();
+        const output = await exec(`"${nimble}" search nim_debugger_mi --ver`);
         // Parse output looking for: versions: X.Y.Z, ...
         const versionMatch = output.match(/versions:\s*([0-9]+\.[0-9]+\.[0-9]+)/);
         if (versionMatch && versionMatch[1]) {

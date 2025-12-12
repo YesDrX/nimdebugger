@@ -87,6 +87,16 @@ The extension uses `nim-debugger-mi` to transform symbols:
 - Type `p myVar` instead of `p myVar_1`
 - All commands work with demangled names
 
+## Troubleshooting
+
+### "nimble: command not found" Error
+
+If you see this error, it means VSCode can't find `nimble` in its PATH. This commonly happens when VSCode is launched from a GUI (especially on Linux) instead of from a terminal. If you just added nimble to your PATH, try:
+
+1. Close ALL VSCode windows
+2. Reopen VSCode
+3. The extension will re-check for nimble with the updated environment
+
 ## Building from Source
 
 ```bash

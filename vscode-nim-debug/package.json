@@ -2,7 +2,7 @@
   "name": "nim-debugger",
   "displayName": "Nim Debugger",
   "description": "Native debugging support for Nim with automatic symbol demangling",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "publisher": "yesdrx",
   "author": {
     "name": "yesdrx"
@@ -41,6 +41,17 @@
         "title": "Nim: Check for nim-debugger-mi Updates"
       }
     ],
+    "configuration": {
+      "title": "Nim Debugger",
+      "properties": {
+        "nim-debugger.nimblePath": {
+          "type": "string",
+          "default": "nimble",
+          "description": "Path to the nimble executable. Leave as 'nimble' to use the system PATH, or specify an absolute path if nimble is not found automatically.",
+          "scope": "machine-overridable"
+        }
+      }
+    },
     "debuggers": [
       {
         "type": "nim",
