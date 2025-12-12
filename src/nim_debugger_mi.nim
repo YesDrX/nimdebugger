@@ -6,76 +6,98 @@ import glob
 
 const BUFFER_SIZE = 8192
 
-proc main() =
-  var debugger = "gdb"
-  var gdbPath = ""
-  var programPath = ""
-  var symbolsPath = ""
-  var gdbArgs: seq[string] = @[]
-  var debugMode = false
+type
+  Argument = object
+    debugger    : string = "gdb" # or lldb
+    gdbPath     : string = ""
+    programPath : string = ""
+    symbolsPath : string = ""
+    gdbArgs     : seq[string]
+    debugMode   : bool = false
 
-  # Parse arguments
-  let args = commandLineParams()
+
+proc parseArgs(args: seq[string]): Argument =
+  let quotes = {'"', '\'', ' ', '`'}
   var i = 0
+  result.gdbPath = findExe("gdb")
+
   while i < args.len:
     let arg = args[i]
-    if arg == "--gdb":
-      debugger = "gdb"
-      gdbPath = "gdb"
-    elif arg == "--lldb":
-      debugger = "lldb"
-      for lldb_mi in walkGlob("~/.vscode/extensions/ms-vscode.cpptools-*/**/lldb-mi".expandTilde):
-        gdbPath = lldb_mi
-        stderr.writeLine("Found lldb-mi: " & gdbPath)
-        stderr.flushFile()
-        break
-      if gdbPath == "":
-        gdbPath = "lldb-mi"
-    elif arg == "--gdb-path":
-      inc i
-      if i < args.len:
-        gdbPath = args[i].expandTilde
-    elif arg == "--lldb-path":
-      inc i
-      if i < args.len:
-        gdbPath = args[i].expandTilde
+    if arg == "--gdb" or arg.startswith("--gdb=") or arg.startswith("--gdb:"):
+      result.debugger = "gdb"
+      if arg != "--gdb":
+        result.gdbPath = arg[5 .. ^1].strip(chars = quotes).expandTilde
+    elif arg == "--lldb" or arg.startswith("--lldb=") or arg.startswith("--lldb:"):
+      result.debugger = "lldb"
+      if arg == "--lldb":
+        for lldb_mi in walkGlob("~/.vscode/extensions/ms-vscode.cpptools-*/**/lldb-mi".expandTilde):
+          result.gdbPath = lldb_mi
+          break
+        if result.gdbPath.len == 0:
+          let lldbPath = findExe("lldb-mi")
+          if lldbPath.len > 0:
+            result.gdbPath = lldbPath
+        if result.gdbPath.len == 0:
+          stderr.writeLine("Failed to find lldb-mi, did you install ms-vscode.cpptools extension?")
+          quit(1)
+      else:
+        result.gdbPath = arg[6 .. ^1].strip(chars = quotes).expandTilde
+    elif arg == "--gdb-path" or arg.startswith("--gdb-path=") or arg.startswith("--gdb-path:"):
+      result.debugger = "gdb"
+      if arg == "--gdb-path":
+        inc i
+        if i < args.len:
+          result.gdbPath = args[i].expandTilde
+      else:
+        result.gdbPath = arg[11 .. ^1].strip(chars = quotes).expandTilde
+    elif arg == "--lldb-path" or arg.startswith("--lldb-path=") or arg.startswith("--lldb-path:"):
+      result.debugger = "lldb"
+      if arg == "--lldb-path":
+        inc i
+        if i < args.len:
+          result.gdbPath = args[i].expandTilde
+      else:
+        result.gdbPath = arg[12 .. ^1].strip(chars = quotes)
     elif arg == "--debug":
-      debugMode = true
+      result.debugMode = true
     elif arg.startsWith("--"):
-      gdbArgs.add(arg)
+      result.gdbArgs.add(arg)
     else:
       if arg.endsWith(".json"):
-        symbolsPath = arg
-      elif programPath == "" and fileExists(arg):
-        programPath = arg
-        gdbArgs.add(arg)
+        result.symbolsPath = arg
+      elif result.programPath == "" and fileExists(arg):
+        result.programPath = arg
+        result.gdbArgs.add(arg)
       else:
-        gdbArgs.add(arg)
+        result.gdbArgs.add(arg)
     inc i
 
+
+proc main() =
+  let cmd_args = commandLineParams()
+  let arg = parseArgs(cmd_args)
+
   stderr.writeLine("Nim Debugger MI Proxy")
-  stderr.writeLine("Input args: " & args.join(" "))
+  stderr.writeLine("Input args: " & cmd_args.join(" "))
+  stderr.writeLine("Parsed args: " & $arg)
   stderr.flushFile()
 
   # Load symbol map
   let sm = newSymbolMap()
-  if symbolsPath != "":
-    if debugMode:
-      stderr.writeLine("Loading custom symbol map from: " & symbolsPath)
-    discard sm.loadFromFile(symbolsPath)
-  elif programPath != "":
-    if debugMode:
-      stderr.writeLine("Loading symbols from: " & programPath)
-    discard sm.loadFromBinary(programPath)
+  if arg.symbolsPath != "":
+    stderr.writeLine("Loading custom symbol map from: " & arg.symbolsPath)
+    discard sm.loadFromFile(arg.symbolsPath)
+  elif arg.programPath != "":
+    stderr.writeLine("Loading symbols from: " & arg.programPath)
+    discard sm.loadFromBinary(arg.programPath)
 
   # Build GDB command
-  if debugMode:
-    stderr.writeLine("Starting Debugger: " & gdbPath & " " & gdbArgs.join(" "))
+  stderr.writeLine("Starting Debugger: " & arg.gdbPath & " " & arg.gdbArgs.join(" "))
 
   # Start GDB process
   var p: Process
   try:
-    p = newProcess(gdbPath, gdbArgs)
+    p = newProcess(arg.gdbPath, arg.gdbArgs)
   except Exception as e:
     stderr.writeLine("Failed to start Debugger: " & e.msg)
     quit(1)
@@ -84,9 +106,8 @@ proc main() =
     stderr.writeLine("Failed to start Debugger process (not running)!")
     quit(1)
 
-  if debugMode:
-    stderr.writeLine("Debugger PID: " & $p.pid)
-    stderr.writeLine("Proxy started. Entering I/O loop...")
+  stderr.writeLine("Debugger PID: " & $p.pid)
+  stderr.writeLine("Proxy started. Entering I/O loop...")
   
   # UNIFIED LOOP FOR BOTH PLATFORMS
   var inBuffer = ""
@@ -121,15 +142,15 @@ proc main() =
         if parts.len == 2:
           let path = parts[1].strip
           if fileExists(path):
-            if debugMode:
+            if arg.debugMode:
               stderr.writeLine("Dynamically loading symbols from: " & path)
             discard sm.loadFromBinary(path)
       
       try:
-        if debugMode:
+        if arg.debugMode:
           stderr.writeLine("Input: " & rawLine)
         let transformed = transformInput(rawLine, sm)
-        if debugMode and transformed != rawLine:
+        if arg.debugMode and transformed != rawLine:
           stderr.writeLine("Transformed Input: " & transformed)
         discard p.write(transformed & "\n")
       except Exception as e:
@@ -149,8 +170,8 @@ proc main() =
           stdout.write("\n"); stdout.flushFile(); continue
         
         try:
-          let transformed = transformOutput(rawLine, sm, debug = debugMode)
-          if debugMode:
+          let transformed = transformOutput(rawLine, sm, debug = arg.debugMode)
+          if arg.debugMode:
             stderr.writeLine("Transformed Output: " & transformed)
           stdout.write(transformed & "\n")
           stdout.flushFile()

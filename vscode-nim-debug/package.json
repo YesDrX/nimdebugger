@@ -2,7 +2,7 @@
   "name": "nim-debugger",
   "displayName": "Nim Debugger",
   "description": "Native debugging support for Nim with automatic symbol demangling",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "publisher": "yesdrx",
   "author": {
     "name": "yesdrx"
@@ -35,6 +35,10 @@
       {
         "command": "nim-debugger.checkInstallation",
         "title": "Nim: Check nim-debugger-mi Installation"
+      },
+      {
+        "command": "nim-debugger.checkForUpdates",
+        "title": "Nim: Check for nim-debugger-mi Updates"
       }
     ],
     "debuggers": [
