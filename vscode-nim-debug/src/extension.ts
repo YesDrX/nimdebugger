@@ -1,429 +1,342 @@
 import * as vscode from 'vscode';
-import * as child_process from 'child_process';
+import * as cp from 'child_process';
 import * as path from 'path';
 import * as os from 'os';
 import * as fs from 'fs';
+import * as util from 'util';
 
-export function activate(context: vscode.ExtensionContext) {
-    console.log('Nim Debugger extension activated');
+const execFile = util.promisify(cp.execFile);
+const outputChannel = vscode.window.createOutputChannel('Nim Debugger');
 
-    // Check installation and updates periodically on activation
-    checkNimDebuggerMiInstallationAndUpdates(context);
+// Configuration
+const UPDATE_CHECK_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+const STORAGE_KEY_LAST_UPDATE = 'nim_debugger_mi_last_update_check';
+const PACKAGE_NAME = 'nim_debugger_mi';
 
-    // Register commands
+function log(message: string, showChannel = false) {
+    const timestamp = new Date().toISOString().split('T')[1].slice(0, -1);
+    outputChannel.appendLine(`[${timestamp}] ${message}`);
+    if (showChannel) outputChannel.show(true);
+}
+
+export async function activate(context: vscode.ExtensionContext) {
+    log(`Activation started. Platform: ${os.platform()}`);
+
     context.subscriptions.push(
-        vscode.commands.registerCommand('nim-debugger.installDebugger', installNimDebuggerMi)
-    );
-
-    context.subscriptions.push(
-        vscode.commands.registerCommand('nim-debugger.checkInstallation', () => checkNimDebuggerMiInstallationAndUpdates(context))
-    );
-
-    context.subscriptions.push(
-        vscode.commands.registerCommand('nim-debugger.checkForUpdates', async () => {
-            const installedVersion = await getInstalledVersion();
-            if (!installedVersion) {
-                vscode.window.showWarningMessage('nim-debugger-mi is not installed.');
-                return;
-            }
-            
-            const latestVersion = await getLatestVersion();
-            if (!latestVersion) {
-                vscode.window.showErrorMessage('Could not check for updates. Please try again later.');
-                return;
-            }
-            
-            if (compareVersions(latestVersion, installedVersion) > 0) {
-                const choice = await vscode.window.showInformationMessage(
-                    `nim-debugger-mi update available: ${installedVersion} → ${latestVersion}`,
-                    'Update', 'Cancel'
-                );
-                
-                if (choice === 'Update') {
-                    await updateNimDebuggerMi();
-                }
-            } else {
-                vscode.window.showInformationMessage(
-                    `nim-debugger-mi is up to date (version ${installedVersion})`
-                );
-            }
+        vscode.commands.registerCommand('nim-debugger.installDebugger', () => {
+            log('Manual install triggered');
+            installOrUpdateDebugger(true);
+        }),
+        vscode.commands.registerCommand('nim-debugger.checkForUpdates', () => {
+            log('Manual update check triggered');
+            manualUpdateCheck();
         })
     );
 
-    // Register debug configuration provider
     context.subscriptions.push(
         vscode.debug.registerDebugConfigurationProvider('nim', new NimDebugConfigurationProvider())
     );
+
+    performStartupChecks(context).catch(err => log(`Startup error: ${err}`));
 }
 
-export function deactivate() { }
+export function deactivate() {}
+
+/**
+ * Startup Logic
+ */
+async function performStartupChecks(context: vscode.ExtensionContext) {
+    const executable = await findExecutable(PACKAGE_NAME);
+    if (!executable) {
+        log('Debugger not found on startup.');
+        const choice = await vscode.window.showInformationMessage(
+            `The '${PACKAGE_NAME}' is required for debugging.`,
+            'Install Now', 'Cancel'
+        );
+        if (choice === 'Install Now') await installOrUpdateDebugger(true);
+        return;
+    }
+    log(`Debugger found at: ${executable}`);
+
+    const lastCheck = context.globalState.get<number>(STORAGE_KEY_LAST_UPDATE, 0);
+    const now = Date.now();
+    
+    if (now - lastCheck > UPDATE_CHECK_INTERVAL_MS) {
+        log('Checking for updates (scheduled)...');
+        await context.globalState.update(STORAGE_KEY_LAST_UPDATE, now);
+        
+        const updateAvailable = await checkForUpdateAvailability();
+        if (updateAvailable) {
+            const choice = await vscode.window.showInformationMessage(
+                `Update available for ${PACKAGE_NAME}.`,
+                'Update', 'Later'
+            );
+            if (choice === 'Update') await installOrUpdateDebugger(false);
+        }
+    }
+}
+
+async function manualUpdateCheck() {
+    outputChannel.show();
+    log('Checking for updates (manual)...');
+    
+    if (!(await findExecutable(PACKAGE_NAME))) {
+        vscode.window.showWarningMessage(`${PACKAGE_NAME} is not installed.`);
+        return;
+    }
+
+    if (await checkForUpdateAvailability(true)) {
+        const choice = await vscode.window.showInformationMessage(
+            `Update available for ${PACKAGE_NAME}.`,
+            'Update', 'Cancel'
+        );
+        if (choice === 'Update') await installOrUpdateDebugger(false);
+    } else {
+        vscode.window.showInformationMessage('Extension is up to date.');
+    }
+}
+
+/**
+ * Installation via Terminal
+ */
+async function installOrUpdateDebugger(isInstall: boolean) {
+    const action = isInstall ? 'Installing' : 'Updating';
+    log(`${action} ${PACKAGE_NAME} via Terminal...`);
+
+    const nimbleExec = await findNimble();
+    if (!nimbleExec) {
+        vscode.window.showErrorMessage('Could not find "nimble". Please install Nim.');
+        return;
+    }
+
+    const env = { ...process.env };
+    const nimbleDir = path.dirname(nimbleExec);
+    const pathKey = Object.keys(env).find(k => k.toLowerCase() === 'path') || 'PATH';
+    const delimiter = os.platform() === 'win32' ? ';' : ':';
+    env[pathKey] = `${nimbleDir}${delimiter}${env[pathKey] || ''}`;
+
+    const term = vscode.window.createTerminal({
+        name: 'Nim Debugger Installer',
+        env: env,
+        message: `Starting ${action}...`
+    });
+
+    term.show();
+    // Accept defaults (-y). 
+    // If there's a permission error, user can type password in terminal or see the error.
+    term.sendText(`nimble install ${PACKAGE_NAME} -y`);
+
+    vscode.window.showInformationMessage(`Check the "Nim Debugger Installer" terminal for progress.`);
+}
+
+/**
+ * Robust Version Checking
+ */
+async function checkForUpdateAvailability(verbose = false): Promise<boolean> {
+    const nimbleExec = await findNimble();
+    if (!nimbleExec) return false;
+
+    try {
+        const env = getNimbleEnv();
+        // Force no color to simplify parsing (though we also strip ANSI later)
+        const opts = { env };
+
+        // 1. Get Local Version
+        let localVer = '0.0.0';
+        try {
+            const { stdout } = await execFile(nimbleExec, ['dump', PACKAGE_NAME], opts);
+            // Robust extract: find 'version:', then grab the first thing that looks like a digit.digit.digit inside quotes
+            const cleanOut = stripAnsi(stdout);
+            const match = cleanOut.match(/version:\s*"(\d+\.\d+\.\d+)"/);
+            if (match) localVer = match[1];
+            if(verbose) log(`Local detection: extracted ${localVer} from dump.`);
+        } catch (e) { if(verbose) log('Local version check failed'); }
+
+        // 2. Get Remote Version
+        let remoteVer = '0.0.0';
+        try {
+            // Using --ver to get list
+            const { stdout } = await execFile(nimbleExec, ['search', PACKAGE_NAME, '--ver', '--noColor'], opts);
+            const cleanOut = stripAnsi(stdout); // Double safety against ANSI codes
+            
+            // Find ALL version strings in the output
+            // This ignores "versions:" prefix and just grabs anything looking like X.Y.Z
+            const versionPattern = /(\d+\.\d+\.\d+)/g;
+            const allVersions = [...cleanOut.matchAll(versionPattern)].map(m => m[1]);
+            
+            if (allVersions.length > 0) {
+                // Deduplicate
+                const uniqueVersions = [...new Set(allVersions)];
+                
+                // Sort Ascending (Oldest -> Newest)
+                uniqueVersions.sort(compareVersions);
+                
+                // Last is newest
+                remoteVer = uniqueVersions[uniqueVersions.length - 1];
+                
+                if(verbose) {
+                    log(`Raw remote versions found: ${JSON.stringify(allVersions)}`);
+                    log(`Sorted unique versions: ${JSON.stringify(uniqueVersions)}`);
+                    log(`Selected latest remote: ${remoteVer}`);
+                }
+            } else {
+                if(verbose) log(`No version pattern matched in search output:\n${cleanOut}`);
+            }
+
+        } catch (e) { if(verbose) log(`Remote version check failed: ${e}`); }
+
+        const needsUpdate = compareVersions(remoteVer, localVer) > 0;
+        log(`Version check: Local=${localVer}, Remote=${remoteVer}. Needs update: ${needsUpdate}`);
+        return needsUpdate;
+
+    } catch (error) {
+        log(`Error checking versions: ${error}`);
+        return false;
+    }
+}
+
+// Regex to strip ANSI escape codes (colors, cursor moves, etc)
+function stripAnsi(str: string): string {
+    return str.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, '');
+}
+
+function compareVersions(v1: string, v2: string): number {
+    const p1 = v1.split('.').map(Number);
+    const p2 = v2.split('.').map(Number);
+    for (let i = 0; i < 3; i++) {
+        const n1 = p1[i] || 0;
+        const n2 = p2[i] || 0;
+        if (n1 > n2) return 1;
+        if (n1 < n2) return -1;
+    }
+    return 0;
+}
+
+/**
+ * Path Utilities
+ */
+function getNimbleEnv(): NodeJS.ProcessEnv {
+    const env = { ...process.env };
+    const pathKey = Object.keys(env).find(k => k.toLowerCase() === 'path') || 'PATH';
+    const nimbleBin = path.join(os.homedir(), '.nimble', 'bin');
+    const delimiter = os.platform() === 'win32' ? ';' : ':';
+    env[pathKey] = `${nimbleBin}${delimiter}${env[pathKey] || ''}`;
+    return env;
+}
+
+async function findNimble(): Promise<string | null> {
+    const config = vscode.workspace.getConfiguration('nim').get<string>('nimblePath');
+    if (config && fs.existsSync(config)) return config;
+    let nimblePath = await findExecutable('nimble');
+    log(`Nimble path resolved to: ${nimblePath}`);
+    return nimblePath;
+}
+
+async function findExecutable(binName: string): Promise<string | null> {
+    const isWin = os.platform() === 'win32';
+    const candidates = isWin && !binName.match(/\.(cmd|exe)$/) 
+        ? [`${binName}.cmd`, `${binName}.exe`, binName] 
+        : [binName];
+
+    const env = getNimbleEnv();
+    const pathKey = Object.keys(env).find(k => k.toLowerCase() === 'path') || 'PATH';
+    const dirs = (env[pathKey] || '').split(os.platform() === 'win32' ? ';' : ':');
+    
+    dirs.unshift(process.cwd());
+    dirs.unshift(path.join(os.homedir(), '.nimble', 'bin'));
+
+    for (const dir of [...new Set(dirs)]) {
+        if (!dir) continue;
+        for (const name of candidates) {
+            const fullPath = path.join(dir, name);
+            if (fs.existsSync(fullPath)) return fullPath;
+        }
+    }
+    return null;
+}
 
 class NimDebugConfigurationProvider implements vscode.DebugConfigurationProvider {
     async resolveDebugConfiguration(
         folder: vscode.WorkspaceFolder | undefined,
-        config: vscode.DebugConfiguration,
-        token?: vscode.CancellationToken
+        config: vscode.DebugConfiguration
     ): Promise<vscode.DebugConfiguration | undefined> {
-
-        // If no miDebuggerPath specified, try to find it
-        if (!config.miDebuggerPath || config.miDebuggerPath.includes('nim_debugger_mi')) {
-            const debuggerPath = await findNimDebuggerMi(config.miDebuggerPath);
-            if (debuggerPath) {
-                config.miDebuggerPath = debuggerPath;
+        
+        // 1. Auto-detect Debugger Path (nim_debugger_mi)
+        if (!config.miDebuggerPath) {
+            const found = await findExecutable(PACKAGE_NAME);
+            if (found) {
+                config.miDebuggerPath = found;
             } else {
-                // Prompt user to install
                 const choice = await vscode.window.showWarningMessage(
-                    'nim-debugger-mi is not installed. Install it now?',
+                    `${PACKAGE_NAME} missing. Install now?`, 'Install'
+                );
+                if (choice === 'Install') {
+                    await installOrUpdateDebugger(true);
+                    vscode.window.showInformationMessage('Restart debugging after installation completes.');
+                }
+                return undefined;
+            }
+        }
+
+        // 2. macOS & CppTools Integration
+        if (os.platform() === 'darwin') {
+            log('Running on macOS, checking for C/C++ Extension for lldb-mi ...');
+            if (config.MIMode !== 'lldb') {
+                log(`Overriding MIMode from '${config.MIMode}' to 'lldb' for macOS compatibility.`);
+            }
+
+            const cppToolsId = 'ms-vscode.cpptools';
+            const cppTools = vscode.extensions.getExtension(cppToolsId);
+            
+            if (cppTools) {
+                log('Detected C/C++ Extension. Configuring lldb mode.');
+
+                let args = config.miDebuggerArgs || '';
+                if (Array.isArray(args)) args = args.join(' ');
+                
+                // Add --lldb flag to the nim_debugger_mi wrapper if missing
+                if (!args.includes('--lldb')) {
+                    config.miDebuggerArgs = `${args} --lldb`.trim();
+                }
+
+                // Optional: Check for bundled lldb-mi for debugging purposes
+                const bundledMiPath = path.join(
+                    cppTools.extensionPath, 
+                    'debugAdapters', 
+                    'lldb-mi', 
+                    'bin', 
+                    'lldb-mi'
+                );
+                if (fs.existsSync(bundledMiPath)) {
+                    log(`Found bundled lldb-mi at: ${bundledMiPath}`);
+                    if (!args.includes('--lldb')) {
+                        log('Appending bundled lldb-mi path to miDebuggerArgs: --lldb=' + bundledMiPath);
+                        config.miDebuggerArgs = `${args} --lldb`.trim() + '=' + bundledMiPath;
+                    }
+                } else {
+                    log('Bundled lldb-mi not found in C/C++ Extension.');
+                    log('Ensure that lldb-mi is installed and available in PATH for debugging to work correctly.');
+                }
+            } else {
+                // CPP Tools NOT found
+                log('C/C++ Extension (ms-vscode.cpptools) missing on macOS.');
+                
+                const choice = await vscode.window.showErrorMessage(
+                    'The C/C++ Extension (ms-vscode.cpptools) is required for debugging on macOS to provide LLDB support.',
                     'Install', 'Cancel'
                 );
 
                 if (choice === 'Install') {
-                    await installNimDebuggerMi();
-                    const newPath = await findNimDebuggerMi();
-                    if (newPath) {
-                        config.miDebuggerPath = newPath;
-                    } else {
-                        return undefined; // Cancel debugging
-                    }
-                } else {
-                    return undefined; // Cancel debugging
+                    log('User chose to install C/C++ Extension. Opening marketplace...');
+                    // Open the extension details page in VS Code
+                    await vscode.commands.executeCommand('extension.open', cppToolsId);
                 }
-            }
-        }
-        
-        // Auto-detect cpptools on macOS and configure lldb-mi
-        if (os.platform() === 'darwin') {
-            const cppTools = vscode.extensions.getExtension('ms-vscode.cpptools');
-            if (cppTools) {
-                config.MIMode = 'lldb';
 
-                let currentArgs = config.miDebuggerArgs || '';
-                if (Array.isArray(currentArgs)) {
-                    currentArgs = currentArgs.join(' ');
-                }
-                
-                config.miDebuggerArgs = `${currentArgs} --lldb`;
+                // Abort debugging because we cannot configure the environment correctly without it
+                return undefined;
             }
         }
 
         return config;
     }
-}
-
-async function findNimDebuggerMi(nim_debugger_mi : string = "nim_debugger_mi"): Promise<string | null> {
-    // Add .exe extension on Windows if not already present
-    const isWindows = os.platform() === 'win32';
-    const executableName = isWindows && !nim_debugger_mi.endsWith('.exe') 
-        ? `${nim_debugger_mi}.exe` 
-        : nim_debugger_mi;
-    
-    // Try common locations
-    const possiblePaths = [
-        path.join(os.homedir(), '.nimble', 'bin', executableName),
-        nim_debugger_mi,
-        executableName
-    ];
-
-    for (const p of possiblePaths) {
-        if (fs.existsSync(p)) {
-            console.log(`Found nim_debugger_mi at: ${p}`);
-            return p;
-        }
-    }
-
-    // Try platform-specific command to find executable in PATH
-    try {
-        const findCommand = isWindows ? 'where' : 'which';
-        const result = await exec(`${findCommand} ${executableName}`);
-        if (result.trim()) {
-            // On Windows, 'where' may return multiple paths, take the first one
-            const firstPath = result.trim().split('\n')[0];
-            console.log(`Found nim_debugger_mi at: ${firstPath}`);
-            return firstPath;
-        }
-    } catch (e) {
-        // Command failed, continue
-    }
-
-    console.log('nim_debugger_mi not found');
-    
-    return null;
-}
-
-function getNimblePath(): string {
-    // Try to get nimble path from Nim extension settings
-    const nimConfig = vscode.workspace.getConfiguration('nim');
-    const nimblePath = nimConfig.get<string>('nimblePath');
-    if (nimblePath) {
-        return nimblePath;
-    }
-    
-    // Try from our own extension settings
-    const debugConfig = vscode.workspace.getConfiguration('nim-debugger');
-    const configNimblePath = debugConfig.get<string>('nimblePath');
-    if (configNimblePath) {
-        return configNimblePath;
-    }
-    
-    // Default to 'nimble' assuming it's in PATH
-    return 'nimble';
-}
-
-function exec(command: string): Promise<string> {
-    return new Promise((resolve, reject) => {
-        const isWindows = os.platform() === 'win32';
-        
-        // On Unix-like systems, source shell config files to get proper PATH
-        let execCommand = command;
-        if (!isWindows) {
-            // Try to source common shell configuration files
-            const shellConfigSources = [
-                'source ~/.bashrc 2>/dev/null || true',
-                'source ~/.bash_profile 2>/dev/null || true',
-                'source ~/.profile 2>/dev/null || true',
-                'source ~/.zshrc 2>/dev/null || true'
-            ].join('; ');
-            execCommand = `${shellConfigSources}; ${command}`;
-        }
-        
-        const options: child_process.ExecOptions = {
-            shell: isWindows ? 'powershell.exe' : '/bin/bash',
-            env: { ...process.env }
-        };
-        
-        // On Windows, add common nimble paths if not already in PATH
-        if (isWindows && options.env) {
-            const userProfile = process.env.USERPROFILE || '';
-            const nimbleBinPath = path.join(userProfile, '.nimble', 'bin');
-            if (!options.env.PATH?.includes(nimbleBinPath)) {
-                options.env.PATH = `${nimbleBinPath};${options.env.PATH || ''}`;
-            }
-        }
-        
-        child_process.exec(execCommand, options, (error, stdout, stderr) => {
-            if (error) {
-                reject(error);
-            } else {
-                resolve(stdout.toString());
-            }
-        });
-    });
-}
-
-async function installNimDebuggerMi() {
-    const nimble = getNimblePath();
-    const outputChannel = vscode.window.createOutputChannel('nim-debugger-mi Installation');
-    outputChannel.show();
-
-    return vscode.window.withProgress({
-        location: vscode.ProgressLocation.Notification,
-        title: 'Installing nim-debugger-mi',
-        cancellable: false
-    }, async (progress) => {
-        progress.report({ message: 'Attempting to install from nimble packages...' });
-        outputChannel.appendLine('Attempting to install nim_debugger_mi from nimble packages...');
-        
-        try {
-            // Try package name first
-            await runNimbleInstall(nimble, 'nim_debugger_mi', outputChannel);
-            vscode.window.showInformationMessage('nim-debugger-mi installed successfully!');
-        } catch (error) {
-            // Fallback to GitHub URL
-            outputChannel.appendLine('Package not found in nimble registry, trying GitHub...');
-            progress.report({ message: 'Installing from GitHub...' });
-            
-            try {
-                await runNimbleInstall(nimble, 'https://github.com/YesDrX/nimdebugger', outputChannel);
-                vscode.window.showInformationMessage('nim-debugger-mi installed successfully from GitHub!');
-            } catch (githubError) {
-                const errorMsg = githubError instanceof Error ? githubError.message : String(githubError);
-                outputChannel.appendLine(`Installation failed: ${errorMsg}`);
-                vscode.window.showErrorMessage(`Failed to install nim-debugger-mi: ${errorMsg}`);
-                throw githubError;
-            }
-        }
-    });
-}
-
-function runNimbleInstall(nimble: string, packageOrUrl: string, outputChannel: vscode.OutputChannel): Promise<void> {
-    return new Promise((resolve, reject) => {
-        const args = ['install', packageOrUrl, '-y'];
-        outputChannel.appendLine(`Running: ${nimble} ${args.join(' ')}`);
-        
-        const isWindows = os.platform() === 'win32';
-        const env = { ...process.env };
-        
-        // On Windows, ensure .nimble/bin is in PATH
-        if (isWindows) {
-            const userProfile = process.env.USERPROFILE || '';
-            const nimbleBinPath = path.join(userProfile, '.nimble', 'bin');
-            if (!env.PATH?.includes(nimbleBinPath)) {
-                env.PATH = `${nimbleBinPath};${env.PATH || ''}`;
-            }
-        }
-        
-        const proc = child_process.spawn(nimble, args, {
-            env,
-            shell: false  // Don't use shell to avoid platform-specific issues
-        });
-        
-        proc.stdout.on('data', (data) => {
-            outputChannel.append(data.toString());
-        });
-        
-        proc.stderr.on('data', (data) => {
-            outputChannel.append(data.toString());
-        });
-        
-        proc.on('error', (error) => {
-            outputChannel.appendLine(`\nError: ${error.message}`);
-            reject(error);
-        });
-        
-        proc.on('close', (code) => {
-            if (code === 0) {
-                outputChannel.appendLine('\nInstallation completed successfully.');
-                resolve();
-            } else {
-                const error = new Error(`nimble install exited with code ${code}`);
-                outputChannel.appendLine(`\nInstallation failed with exit code ${code}`);
-                reject(error);
-            }
-        });
-    });
-}
-
-async function checkNimDebuggerMiInstallationAndUpdates(context: vscode.ExtensionContext) {
-    const debuggerPath = await findNimDebuggerMi();
-
-    if (debuggerPath) {
-        vscode.window.showInformationMessage(
-            `nim-debugger-mi is installed at: ${debuggerPath}`
-        );
-        // Check for updates periodically (at most once per week)
-        await checkForUpdatesIfNeeded(context);
-    } else {
-        const choice = await vscode.window.showWarningMessage(
-            'nim-debugger-mi is not installed. Would you like to install it?',
-            'Install', 'Later'
-        );
-
-        if (choice === 'Install') {
-            await installNimDebuggerMi();
-        }
-    }
-}
-
-async function checkForUpdatesIfNeeded(context: vscode.ExtensionContext) {
-    const LAST_CHECK_KEY = 'nimDebuggerMi.lastUpdateCheck';
-    const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000; // 7 days in milliseconds
-
-    const lastCheck = context.globalState.get<number>(LAST_CHECK_KEY, 0);
-    const now = Date.now();
-
-    // Check if it's been more than a week since the last check
-    if (now - lastCheck < ONE_WEEK_MS) {
-        console.log('Update check skipped - checked recently');
-        return;
-    }
-
-    // Update the last check timestamp
-    await context.globalState.update(LAST_CHECK_KEY, now);
-
-    // Perform the update check
-    await checkForUpdates();
-}
-
-async function getInstalledVersion(): Promise<string | null> {
-    try {
-        const nimble = getNimblePath();
-        const output = await exec(`"${nimble}" dump nim_debugger_mi`);
-        // Parse output looking for: version: "X.Y.Z"
-        const versionMatch = output.match(/version:\s*"([^"]+)"/);
-        if (versionMatch && versionMatch[1]) {
-            return versionMatch[1];
-        }
-    } catch (e) {
-        // Package not installed or nimble not available
-        console.error('Failed to get installed version:', e);
-    }
-    return null;
-}
-
-async function getLatestVersion(): Promise<string | null> {
-    try {
-        const nimble = getNimblePath();
-        const output = await exec(`"${nimble}" search nim_debugger_mi --ver`);
-        // Parse output looking for: versions: X.Y.Z, ...
-        const versionMatch = output.match(/versions:\s*([0-9]+\.[0-9]+\.[0-9]+)/);
-        if (versionMatch && versionMatch[1]) {
-            return versionMatch[1];
-        }
-    } catch (e) {
-        console.error('Failed to get latest version:', e);
-    }
-    return null;
-}
-
-function compareVersions(v1: string, v2: string): number {
-    const parts1 = v1.split('.').map(Number);
-    const parts2 = v2.split('.').map(Number);
-    
-    for (let i = 0; i < 3; i++) {
-        const p1 = parts1[i] || 0;
-        const p2 = parts2[i] || 0;
-        if (p1 > p2) return 1;
-        if (p1 < p2) return -1;
-    }
-    return 0;
-}
-
-async function checkForUpdates() {
-    const installedVersion = await getInstalledVersion();
-    if (!installedVersion) {
-        return; // Not installed, nothing to update
-    }
-
-    const latestVersion = await getLatestVersion();
-    if (!latestVersion) {
-        console.log('Could not determine latest version');
-        return;
-    }
-
-    if (compareVersions(latestVersion, installedVersion) > 0) {
-        const choice = await vscode.window.showInformationMessage(
-            `nim-debugger-mi update available: ${installedVersion} → ${latestVersion}`,
-            'Update', 'Later'
-        );
-
-        if (choice === 'Update') {
-            await updateNimDebuggerMi();
-        }
-    } else {
-        console.log(`nim-debugger-mi is up to date (${installedVersion})`);
-    }
-}
-
-async function updateNimDebuggerMi() {
-    const nimble = getNimblePath();
-    const outputChannel = vscode.window.createOutputChannel('nim-debugger-mi Update');
-    outputChannel.show();
-
-    return vscode.window.withProgress({
-        location: vscode.ProgressLocation.Notification,
-        title: 'Updating nim-debugger-mi',
-        cancellable: false
-    }, async (progress) => {
-        progress.report({ message: 'Updating package...' });
-        outputChannel.appendLine('Updating nim_debugger_mi...');
-        
-        try {
-            await runNimbleInstall(nimble, 'nim_debugger_mi', outputChannel);
-            vscode.window.showInformationMessage('nim-debugger-mi updated successfully!');
-        } catch (error) {
-            const errorMsg = error instanceof Error ? error.message : String(error);
-            outputChannel.appendLine(`Update failed: ${errorMsg}`);
-            vscode.window.showErrorMessage(`Failed to update nim-debugger-mi: ${errorMsg}`);
-        }
-    });
 }

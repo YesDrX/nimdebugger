@@ -65,7 +65,7 @@ Install the ["Nim Debugger"](https://marketplace.visualstudio.com/items?itemName
     "type": "cppdbg",
     "request": "launch",
     "program": "${fileDirname}/${fileBasenameNoExtension}",
-    "miDebuggerPath": "${userHome}/.nimble/bin/nim_debugger_mi.exe",
+    "miDebuggerPath": "${userHome}/.nimble/bin/nim_debugger_mi.cmd",
     "miDebuggerArgs": "", //you may specify gdb path by --gdb=/path/to/your/gdb.exe
     "MIMode": "gdb",
     "args": [],
