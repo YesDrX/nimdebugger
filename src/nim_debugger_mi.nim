@@ -1,8 +1,9 @@
-import os, strutils
+when not defined(windows):
+  import posix
 
-import posix
-import symbol_map, mi_transformer, process
+import std/[asyncdispatch, asyncfile, os, strformat, locks,os, strutils, times]
 import glob
+import symbol_map, mi_transformer, process
 
 const BUFFER_SIZE = 8192
 
@@ -15,10 +16,31 @@ type
     gdbArgs     : seq[string]
     debugMode   : bool = false
 
+proc toStdout(line: string, debugStdoutFileName: string = "") =
+  if line.len == 0: return
+  if debugStdoutFileName.len > 0:
+    let file = open(debugStdoutFileName, fmAppend)
+    file.writeLine(now().format("yyyyMMddHHmmss") & ": " & line)
+    file.close()
+  stdout.writeLine(line)
+  stdout.flushFile()
+
+proc toStderr(line: string, debugStderrFileName: string = "") =
+  if line.len == 0: return
+  if debugStderrFileName.len > 0:
+    let file = open(debugStderrFileName, fmAppend)
+    file.writeLine(now().format("yyyyMMddHHmmss") & ": " & line)
+    file.close()
+  
+  when not defined(windows):
+    # somehow stderr on windows is quite easy to get stuck
+    stderr.writeLine(line)
+    stderr.flushFile()
 
 proc parseArgs(args: seq[string]): Argument =
   let quotes = {'"', '\'', ' ', '`'}
   var i = 0
+  result.debugger = "gdb"
   result.gdbPath = findExe("gdb")
 
   while i < args.len:
@@ -38,7 +60,7 @@ proc parseArgs(args: seq[string]): Argument =
           if lldbPath.len > 0:
             result.gdbPath = lldbPath
         if result.gdbPath.len == 0:
-          stderr.writeLine("Failed to find lldb-mi, did you install ms-vscode.cpptools extension?")
+          toStderr("Failed to find lldb-mi, did you install ms-vscode.cpptools extension?")
           quit(1)
       else:
         result.gdbPath = arg[6 .. ^1].strip(chars = quotes).expandTilde
@@ -72,127 +94,149 @@ proc parseArgs(args: seq[string]): Argument =
         result.gdbArgs.add(arg)
     inc i
 
+var
+  stdinChann: Channel[string]
+
+proc stdinReader() {.thread.} =
+  try:
+    while true:
+      let line = stdin.readLine()
+      if line.len > 0:
+        stdinChann.send(line)
+      sleep(5)
+  except EOFError:
+    # VS Code closed the pipe
+    stdinChann.send("__EOF__") 
+  except Exception as e:
+    # Catch crashes
+    stdinChann.send("__ERROR__: " & e.msg)
 
 proc main() =
   let cmd_args = commandLineParams()
   let arg = parseArgs(cmd_args)
 
-  stderr.writeLine("Nim Debugger MI Proxy")
-  stderr.writeLine("Input args: " & cmd_args.join(" "))
-  stderr.writeLine("Parsed args: " & $arg)
-  stderr.flushFile()
+  var
+    debugStdoutFileName = ""
+    debugStderrFileName = ""
+
+  if arg.debugMode:
+    debugStdoutFileName = fmt"""debugger_stdout_{now().format("yyyyMMddHHmmss")}.log"""
+    debugStderrFileName = fmt"""debugger_stderr_{now().format("yyyyMMddHHmmss")}.log"""
+    writeFile(debugStdoutFileName, "")
+    writeFile(debugStderrFileName, "")
+
+  toStderr("Nim Debugger MI Proxy", debugStderrFileName)
+  toStderr("Input args: " & cmd_args.join(" "), debugStderrFileName)
+  toStderr("Parsed args: " & $arg, debugStderrFileName)
 
   # Load symbol map
   let sm = newSymbolMap()
   if arg.symbolsPath != "":
-    stderr.writeLine("Loading custom symbol map from: " & arg.symbolsPath)
+    toStderr("Loading custom symbol map from: " & arg.symbolsPath, debugStderrFileName)
     discard sm.loadFromFile(arg.symbolsPath)
   elif arg.programPath != "":
-    stderr.writeLine("Loading symbols from: " & arg.programPath)
+    toStderr("Loading symbols from: " & arg.programPath, debugStderrFileName)
     discard sm.loadFromBinary(arg.programPath)
 
   # Build GDB command
-  stderr.writeLine("Starting Debugger: " & arg.gdbPath & " " & arg.gdbArgs.join(" "))
+  toStderr("Starting Debugger: " & arg.gdbPath & " " & arg.gdbArgs.join(" "), debugStderrFileName)
+
+  # Initialize input channel and reader thread
+  stdinChann.open()
+  var stdinChanThread: Thread[void]
+  createThread(stdinChanThread, stdinReader)
 
   # Start GDB process
   var p: Process
   try:
     p = newProcess(arg.gdbPath, arg.gdbArgs)
   except Exception as e:
-    stderr.writeLine("Failed to start Debugger: " & e.msg)
+    toStderr("Failed to start Debugger: " & e.msg, debugStderrFileName)
     quit(1)
 
   if not p.isRunning:
-    stderr.writeLine("Failed to start Debugger process (not running)!")
+    toStderr("Failed to start Debugger process (not running)!", debugStderrFileName)
     quit(1)
 
-  stderr.writeLine("Debugger PID: " & $p.pid)
-  stderr.writeLine("Proxy started. Entering I/O loop...")
-  
-  # UNIFIED LOOP FOR BOTH PLATFORMS
   var inBuffer = ""
   var outBuffer = ""
-  var pfd: array[1, TPollfd]
-  pfd[0].fd = 0
-  pfd[0].events = POLLIN
-  
   while true:
-    # 1. Try to read stdin
-    # Unix: Use poll
-    let ret = poll(addr pfd[0], 1, 10)
-    if ret > 0 and (pfd[0].revents and POLLIN) != 0:
-      var buf = newString(BUFFER_SIZE)
-      let n = read(0, addr buf[0], BUFFER_SIZE)
-      if n > 0:
-        inBuffer.add(buf[0 ..< n])
-      elif n <= 0:
-        p.close()
-        quit(0)
+    # 1. Check GDB Output
+    while true:
+      let gdbOut = p.readOutput(10)
+
+      if gdbOut.len == 0: break
+      outBuffer.add(gdbOut)
+
+      while true:
+        let nlPos = outBuffer.find('\n')
+        if nlPos == -1: break
+        let rawLine = outBuffer[0 ..< nlPos].strip()
+        outBuffer = outBuffer[(nlPos + 1) .. ^1]
+        try:
+          let transformed = transformOutput(rawLine, sm, debug = arg.debugMode)
+          if arg.debugMode: toStderr("Transformed Output: " & transformed, debugStderrFileName)
+          toStdout(transformed, debugStdoutFileName)
+        except Exception as e:
+          toStdout(rawLine, debugStdoutFileName)
     
-    # 2. Process stdin lines
+    # 2. Check GDB Stderr
+    while true:
+      let gdbErr = p.readError(10)
+      if gdbErr.len == 0: break
+      toStderr(gdbErr.strip(), debugStderrFileName)
+    
+    # 3. Read from stdin
+    let (stdinReceived, stdinRawInput) = stdinChann.tryRecv()
+    if stdinReceived: inBuffer.add(stdinRawInput & "\n")
+    
+    # 4. Process stdin lines
     while true:
       let nlPos = inBuffer.find('\n')
       if nlPos == -1: break
-      let rawLine = inBuffer[0 ..< nlPos]
+      var rawLine = inBuffer[0 ..< nlPos].strip()
       inBuffer = inBuffer[(nlPos + 1) .. ^1]
+
       if rawLine.len == 0: continue
       
-      if rawLine.startsWith("-file-exec-and-symbols"):
+      # [CHECK 1] Check for Reader Thread Crash/EOF
+      if rawLine == "__EOF__":
+        toStderr("Stdin closed by VS Code.", debugStderrFileName)
+        quit(0)
+      
+      if rawLine.startsWith("__ERROR__"):
+        toStderr("Reader Thread Crashed: " & rawLine, debugStderrFileName)
+        quit(1)
+
+      # [CHECK 2] Handle Symbols loading
+      if rawLine.contains("-file-exec-and-symbols"):
         let parts = rawLine.split(maxsplit=1)
         if parts.len == 2:
           let path = parts[1].strip
           if fileExists(path):
-            if arg.debugMode:
-              stderr.writeLine("Dynamically loading symbols from: " & path)
+            if arg.debugMode: toStderr("Dynamically loading symbols from: " & path, debugStderrFileName)
             discard sm.loadFromBinary(path)
+
+      # [CHECK 3] TRANSFORM INPUT
+      # Sanitize "CON" arguments to prevent GDB/MIEngine confusion
+      if rawLine.contains("-exec-arguments"):
+         rawLine = rawLine.replace("2>CON", "").replace("1>CON", "").replace("<CON", "").strip()
       
       try:
-        if arg.debugMode:
-          stderr.writeLine("Input: " & rawLine)
+        if arg.debugMode: toStderr("VS -> GDB: " & rawLine, debugStderrFileName)
         let transformed = transformInput(rawLine, sm)
-        if arg.debugMode and transformed != rawLine:
-          stderr.writeLine("Transformed Input: " & transformed)
         discard p.write(transformed & "\n")
       except Exception as e:
-        stderr.writeLine("Error transforming input: " & e.msg)
+        toStderr("Error forwarding input: " & e.msg, debugStderrFileName)
         discard p.write(rawLine & "\n")
-    
-    # 3. Check GDB Output
-    let gdbOut = p.readOutput(10)
-    if gdbOut.len > 0:
-      outBuffer.add(gdbOut)
-      while true:
-        let nlPos = outBuffer.find('\n')
-        if nlPos == -1: break
-        let rawLine = outBuffer[0 ..< nlPos]
-        outBuffer = outBuffer[(nlPos + 1) .. ^1]
-        if rawLine.len == 0:
-          stdout.write("\n"); stdout.flushFile(); continue
-        
-        try:
-          let transformed = transformOutput(rawLine, sm, debug = arg.debugMode)
-          if arg.debugMode:
-            stderr.writeLine("Transformed Output: " & transformed)
-          stdout.write(transformed & "\n")
-          stdout.flushFile()
-        except Exception as e:
-          stderr.writeLine("Error transforming output: " & e.msg)
-          stdout.write(rawLine & "\n")
-          stdout.flushFile()
-    
-    # 4. Check GDB Stderr
-    let gdbErr = p.readError(0)
-    if gdbErr.len > 0:
-      stderr.write(gdbErr)
-      stderr.flushFile()
     
     # 5. Check if process is still running
     if not p.isRunning:
-      stderr.writeLine("GDB Exited")
+      toStderr("GDB Exited", debugStderrFileName)
       quit(0)
     
     # 6. Small sleep
-    sleep(10)
+    sleep(5)
   
   p.close()
 

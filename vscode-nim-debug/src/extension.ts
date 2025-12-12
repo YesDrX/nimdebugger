@@ -111,11 +111,17 @@ class NimDebugConfigurationProvider implements vscode.DebugConfigurationProvider
 }
 
 async function findNimDebuggerMi(nim_debugger_mi : string = "nim_debugger_mi"): Promise<string | null> {
+    // Add .exe extension on Windows if not already present
+    const isWindows = os.platform() === 'win32';
+    const executableName = isWindows && !nim_debugger_mi.endsWith('.exe') 
+        ? `${nim_debugger_mi}.exe` 
+        : nim_debugger_mi;
+    
     // Try common locations
     const possiblePaths = [
-        path.join(os.homedir(), '.nimble', 'bin', 'nim_debugger_mi'),
+        path.join(os.homedir(), '.nimble', 'bin', executableName),
         nim_debugger_mi,
-        'nim_debugger_mi' // Will use PATH
+        executableName
     ];
 
     for (const p of possiblePaths) {
@@ -125,12 +131,15 @@ async function findNimDebuggerMi(nim_debugger_mi : string = "nim_debugger_mi"): 
         }
     }
 
-    // Try 'which' command
+    // Try platform-specific command to find executable in PATH
     try {
-        const result = await exec('which nim_debugger_mi');
+        const findCommand = isWindows ? 'where' : 'which';
+        const result = await exec(`${findCommand} ${executableName}`);
         if (result.trim()) {
-            console.log(`Found nim_debugger_mi at: ${result.trim()}`);
-            return result.trim();
+            // On Windows, 'where' may return multiple paths, take the first one
+            const firstPath = result.trim().split('\n')[0];
+            console.log(`Found nim_debugger_mi at: ${firstPath}`);
+            return firstPath;
         }
     } catch (e) {
         // Command failed, continue
@@ -202,16 +211,86 @@ function exec(command: string): Promise<string> {
 }
 
 async function installNimDebuggerMi() {
-    const terminal = vscode.window.createTerminal('Install nim-debugger-mi');
-    terminal.show();
+    const nimble = getNimblePath();
+    const outputChannel = vscode.window.createOutputChannel('nim-debugger-mi Installation');
+    outputChannel.show();
 
-    // Try package name first, then GitHub URL as fallback
-    terminal.sendText('echo "Attempting to install nim_debugger_mi from nimble packages..."');
-    terminal.sendText('nimble install nim_debugger_mi -y || (echo "Package not found, installing from GitHub..." && nimble install https://github.com/YesDrX/nimdebugger -y)');
+    return vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: 'Installing nim-debugger-mi',
+        cancellable: false
+    }, async (progress) => {
+        progress.report({ message: 'Attempting to install from nimble packages...' });
+        outputChannel.appendLine('Attempting to install nim_debugger_mi from nimble packages...');
+        
+        try {
+            // Try package name first
+            await runNimbleInstall(nimble, 'nim_debugger_mi', outputChannel);
+            vscode.window.showInformationMessage('nim-debugger-mi installed successfully!');
+        } catch (error) {
+            // Fallback to GitHub URL
+            outputChannel.appendLine('Package not found in nimble registry, trying GitHub...');
+            progress.report({ message: 'Installing from GitHub...' });
+            
+            try {
+                await runNimbleInstall(nimble, 'https://github.com/YesDrX/nimdebugger', outputChannel);
+                vscode.window.showInformationMessage('nim-debugger-mi installed successfully from GitHub!');
+            } catch (githubError) {
+                const errorMsg = githubError instanceof Error ? githubError.message : String(githubError);
+                outputChannel.appendLine(`Installation failed: ${errorMsg}`);
+                vscode.window.showErrorMessage(`Failed to install nim-debugger-mi: ${errorMsg}`);
+                throw githubError;
+            }
+        }
+    });
+}
 
-    vscode.window.showInformationMessage(
-        'Installing nim-debugger-mi... Please wait for the installation to complete in the terminal.'
-    );
+function runNimbleInstall(nimble: string, packageOrUrl: string, outputChannel: vscode.OutputChannel): Promise<void> {
+    return new Promise((resolve, reject) => {
+        const args = ['install', packageOrUrl, '-y'];
+        outputChannel.appendLine(`Running: ${nimble} ${args.join(' ')}`);
+        
+        const isWindows = os.platform() === 'win32';
+        const env = { ...process.env };
+        
+        // On Windows, ensure .nimble/bin is in PATH
+        if (isWindows) {
+            const userProfile = process.env.USERPROFILE || '';
+            const nimbleBinPath = path.join(userProfile, '.nimble', 'bin');
+            if (!env.PATH?.includes(nimbleBinPath)) {
+                env.PATH = `${nimbleBinPath};${env.PATH || ''}`;
+            }
+        }
+        
+        const proc = child_process.spawn(nimble, args, {
+            env,
+            shell: false  // Don't use shell to avoid platform-specific issues
+        });
+        
+        proc.stdout.on('data', (data) => {
+            outputChannel.append(data.toString());
+        });
+        
+        proc.stderr.on('data', (data) => {
+            outputChannel.append(data.toString());
+        });
+        
+        proc.on('error', (error) => {
+            outputChannel.appendLine(`\nError: ${error.message}`);
+            reject(error);
+        });
+        
+        proc.on('close', (code) => {
+            if (code === 0) {
+                outputChannel.appendLine('\nInstallation completed successfully.');
+                resolve();
+            } else {
+                const error = new Error(`nimble install exited with code ${code}`);
+                outputChannel.appendLine(`\nInstallation failed with exit code ${code}`);
+                reject(error);
+            }
+        });
+    });
 }
 
 async function checkNimDebuggerMiInstallationAndUpdates(context: vscode.ExtensionContext) {
@@ -326,13 +405,25 @@ async function checkForUpdates() {
 }
 
 async function updateNimDebuggerMi() {
-    const terminal = vscode.window.createTerminal('Update nim-debugger-mi');
-    terminal.show();
+    const nimble = getNimblePath();
+    const outputChannel = vscode.window.createOutputChannel('nim-debugger-mi Update');
+    outputChannel.show();
 
-    // terminal.sendText('echo "Updating nim_debugger_mi..."');
-    terminal.sendText('nimble install nim_debugger_mi -y');
-
-    vscode.window.showInformationMessage(
-        'Updating nim-debugger-mi... Please wait for the update to complete in the terminal.'
-    );
+    return vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: 'Updating nim-debugger-mi',
+        cancellable: false
+    }, async (progress) => {
+        progress.report({ message: 'Updating package...' });
+        outputChannel.appendLine('Updating nim_debugger_mi...');
+        
+        try {
+            await runNimbleInstall(nimble, 'nim_debugger_mi', outputChannel);
+            vscode.window.showInformationMessage('nim-debugger-mi updated successfully!');
+        } catch (error) {
+            const errorMsg = error instanceof Error ? error.message : String(error);
+            outputChannel.appendLine(`Update failed: ${errorMsg}`);
+            vscode.window.showErrorMessage(`Failed to update nim-debugger-mi: ${errorMsg}`);
+        }
+    });
 }

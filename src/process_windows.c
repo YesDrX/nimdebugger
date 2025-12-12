@@ -121,52 +121,37 @@ static int read_from_handle(HANDLE h, char* buffer, int buffer_size, int timeout
     if (h == INVALID_HANDLE_VALUE) return -1;
     
     DWORD bytesRead = 0;
-    OVERLAPPED overlapped = {0};
-    HANDLE hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+    DWORD bytesAvail = 0;
+    DWORD startTime = GetTickCount();
     
-    if (!hEvent) return -1;
-    
-    overlapped.hEvent = hEvent;
-    
-    // Start asynchronous read
-    BOOL success = ReadFile(h, buffer, buffer_size - 1, &bytesRead, &overlapped);
-    
-    if (!success) {
-        DWORD err = GetLastError();
-        if (err == ERROR_IO_PENDING) {
-            // Wait for read to complete
-            DWORD waitResult = WaitForSingleObject(hEvent, timeout_ms);
-            if (waitResult == WAIT_OBJECT_0) {
-                // Read completed, get result
-                if (!GetOverlappedResult(h, &overlapped, &bytesRead, FALSE)) {
-                    bytesRead = 0;
-                }
-            } else {
-                // Timeout or error
-                CancelIo(h);
-                bytesRead = 0;
-            }
-        } else if (err == ERROR_BROKEN_PIPE) {
-            // Pipe was closed
-            bytesRead = 0;
-        } else {
-            // Other error
-            bytesRead = -1;
+    while (1) {
+        // Check if data is currently in the pipe
+        if (!PeekNamedPipe(h, NULL, 0, NULL, &bytesAvail, NULL)) {
+            DWORD err = GetLastError();
+            if (err == ERROR_BROKEN_PIPE) return 0; // Pipe closed by child
+            return -1; // Other error
         }
+        
+        if (bytesAvail > 0) {
+            // Data is available! Safe to read without blocking.
+            if (!ReadFile(h, buffer, buffer_size - 1, &bytesRead, NULL)) {
+                return -1;
+            }
+            if (bytesRead > 0) {
+                buffer[bytesRead] = '\0'; // Null-terminate
+                return (int)bytesRead;
+            }
+            return 0;
+        }
+        
+        // No data yet. Check if we timed out.
+        if ((GetTickCount() - startTime) >= (DWORD)timeout_ms) {
+            return 0; // Timeout, no data read
+        }
+        
+        // Wait a tiny bit before peeking again to save CPU
+        Sleep(1);
     }
-    
-    if (hEvent != INVALID_HANDLE_VALUE) {
-        CloseHandle(hEvent);
-    }
-    
-    if (bytesRead > 0) {
-        buffer[bytesRead] = '\0';  // Null-terminate
-    } else if (bytesRead == 0) {
-        // EOF or timeout
-        return 0;
-    }
-    
-    return (int)bytesRead;
 }
 
 ProcessHandle* start_process(const char* cmd, char** args) {

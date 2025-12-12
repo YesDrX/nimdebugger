@@ -2,7 +2,7 @@
   "name": "nim-debugger",
   "displayName": "Nim Debugger",
   "description": "Native debugging support for Nim with automatic symbol demangling",
-  "version": "0.2.6",
+  "version": "0.3.0",
   "publisher": "yesdrx",
   "author": {
     "name": "yesdrx"

@@ -38,28 +38,43 @@ Add to your `.vscode/launch.json`:
 #### Linux/WSL
 ```json
 {
-    "name": "Debug Nim",
+    "name": "Nim",
     "type": "cppdbg",
     "request": "launch",
-    "program": "${workspaceFolder}/${fileBasenameNoExtension}",
+    "program": "${fileDirname}/${fileBasenameNoExtension}",
     "miDebuggerPath": "${userHome}/.nimble/bin/nim_debugger_mi",
-    "miDebuggerArgs": "", // you may specify gdb path by --gdb=/path/to/your/gdb
+    "miDebuggerArgs": "", //you may specify gdb path by --gdb=/path/to/your/gdb
     "MIMode": "gdb",
     "args": [],
     "cwd": "${workspaceFolder}"
 }
 ```
 
-#### Mac (Apple Silicon)
+#### Mac
 ```json
 {
-    "name": "Debug Nim",
+    "name": "Nim",
     "type": "cppdbg",
     "request": "launch",
-    "program": "${workspaceFolder}/${fileBasenameNoExtension}",
+    "program": "${fileDirname}/${fileBasenameNoExtension}",
     "miDebuggerPath": "${userHome}/.nimble/bin/nim_debugger_mi",
     "miDebuggerArgs": "--lldb", //you may specify lldb path by --lldb=/path/to/your/lldb-mi
     "MIMode": "lldb",
+    "args": [],
+    "cwd": "${workspaceFolder}"
+}
+```
+
+### Windows
+```json
+{
+    "name": "Nim",
+    "type": "cppdbg",
+    "request": "launch",
+    "program": "${fileDirname}/${fileBasenameNoExtension}",
+    "miDebuggerPath": "${userHome}/.nimble/bin/nim_debugger_mi.exe",
+    "miDebuggerArgs": "", //you may specify gdb path by --gdb=/path/to/your/gdb.exe
+    "MIMode": "gdb",
     "args": [],
     "cwd": "${workspaceFolder}"
 }

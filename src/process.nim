@@ -1,36 +1,9 @@
 # process.nim
 when defined(windows):
   {.compile: "process_windows.c".}
-  {.passC: "-D_WIN32 -DWIN32_LEAN_AND_MEAN".}
+  import winlean
 else:
   {.compile: "process.c".}
-
-when defined(windows):
-  import winlean
-  # Define Windows API constants and types
-  type
-    WINBOOL = int32
-    LPOVERLAPPED = pointer
-  
-  # Declare Windows API functions with correct signatures
-  proc ReadFile(hFile: Handle, lpBuffer: pointer, nNumberOfBytesToRead: DWORD,
-                lpNumberOfBytesRead: ptr DWORD, lpOverlapped: LPOVERLAPPED): WINBOOL {.stdcall, dynlib: "kernel32", importc: "ReadFile".}
-  
-  proc WriteFile(hFile: Handle, lpBuffer: pointer, nNumberOfBytesToWrite: DWORD,
-                 lpNumberOfBytesWritten: ptr DWORD, lpOverlapped: LPOVERLAPPED): WINBOOL {.stdcall, dynlib: "kernel32", importc: "WriteFile".}
-  
-  proc FlushFileBuffers(hFile: Handle): WINBOOL {.stdcall, dynlib: "kernel32", importc: "FlushFileBuffers".}
-  
-  proc GetExitCodeProcess(hProcess: Handle, lpExitCode: ptr DWORD): WINBOOL {.stdcall, dynlib: "kernel32", importc: "GetExitCodeProcess".}
-  
-  proc WaitForSingleObject(hHandle: Handle, dwMilliseconds: DWORD): DWORD {.stdcall, dynlib: "kernel32", importc: "WaitForSingleObject".}
-  
-  proc CloseHandle(hObject: Handle): WINBOOL {.stdcall, dynlib: "kernel32", importc: "CloseHandle".}
-  
-  const
-    STILL_ACTIVE = 259.DWORD
-else:
-  import posix
 
 when defined(windows):
   type
@@ -62,11 +35,17 @@ type
 
 proc newProcess*(cmd: string, args: openArray[string]): Process =
   # Convert args to C format (null-terminated array)
-  var all_args = @[cmd] & @args
-  var cargs = newSeq[cstring](all_args.len + 1)
-  for i, arg in all_args:
-    cargs[i] = cstring(arg)
-  cargs[all_args.len] = nil
+  when defined(windows):
+    var cargs : seq[cstring] = newSeq[cstring](args.len + 1)
+    for i, arg in args:
+      cargs[i] = cstring(arg)
+    cargs[args.len] = nil
+  else:
+    var cargs : seq[cstring] = newSeq[cstring](args.len + 2)
+    cargs[0] = cstring(cmd)
+    for i, arg in args:
+      cargs[i + 1] = cstring(arg)
+    cargs[args.len + 1] = nil
   
   let handle = start_process(cmd.cstring, addr cargs[0])
   if handle == nil:
@@ -92,10 +71,7 @@ proc isRunning*(p: Process): bool =
 
 proc pid*(p: Process): int =
   if p.handle != nil:
-    when defined(windows):
-      return p.handle.pid.int
-    else:
-      return p.handle.pid.int
+    return p.handle.pid.int
   return 0
 
 proc readOutput*(p: Process, timeoutMs: int): string =
@@ -114,51 +90,11 @@ proc readError*(p: Process, timeoutMs: int): string =
   else:
     result = ""
 
-# IO Accessors for compatibility with existing code
-when defined(windows):
-  proc inputHandle*(p: Process): Handle = 
-    if p.handle != nil: p.handle.input_fd else: Handle(0)
-  
-  proc outputHandle*(p: Process): Handle = 
-    if p.handle != nil: p.handle.output_fd else: Handle(0)
-  
-  proc errorHandle*(p: Process): Handle = 
-    if p.handle != nil: p.handle.error_fd else: Handle(0)
-  
-  # Direct read helpers for Windows
-  proc readOutputDirect*(p: Process, buffer: pointer, len: int): int =
-    var bytesRead: DWORD = 0
-    if p.handle != nil and p.handle.output_fd != Handle(0):
-      let success = ReadFile(p.handle.output_fd, buffer, len.DWORD, addr bytesRead, nil)
-      if success != 0:  # WINBOOL success (non-zero means success)
-        return bytesRead.int
-    return -1
-  
-  proc readErrorDirect*(p: Process, buffer: pointer, len: int): int =
-    var bytesRead: DWORD = 0
-    if p.handle != nil and p.handle.error_fd != Handle(0):
-      let success = ReadFile(p.handle.error_fd, buffer, len.DWORD, addr bytesRead, nil)
-      if success != 0:  # WINBOOL success (non-zero means success)
-        return bytesRead.int
-    return -1
 
-else:
-  proc inputHandle*(p: Process): cint = 
-    if p.handle != nil: p.handle.input_fd else: -1
-  
-  proc outputHandle*(p: Process): cint = 
-    if p.handle != nil: p.handle.output_fd else: -1
-  
-  proc errorHandle*(p: Process): cint = 
-    if p.handle != nil: p.handle.error_fd else: -1
-  
-  # Direct read helpers for Unix
-  proc readOutputDirect*(p: Process, buffer: pointer, len: int): int =
-    if p.handle != nil:
-      return posix.read(p.handle.output_fd, buffer, len)
-    return -1
-  
-  proc readErrorDirect*(p: Process, buffer: pointer, len: int): int =
-    if p.handle != nil:
-      return posix.read(p.handle.error_fd, buffer, len)
-    return -1
+when isMainModule:
+  # Example usage
+  let p = newProcess("cmd", @["help"])
+  echo "Started process with PID: ", p.pid()
+  let output = p.readOutput(8000)
+  echo "Output: ", output
+  p.close()
