@@ -41,6 +41,12 @@ jobs:
         nim-version: ${{ matrix.nim-version }}
         repo-token: ${{ github.token }}
 
+    - name: Install system dependencies (Ubuntu)
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libpcre3-dev
+
     - name: Install Packages
       run: nimble install -y
         
