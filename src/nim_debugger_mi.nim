@@ -163,7 +163,7 @@ proc main() =
   while true:
     # 1. Check GDB Output
     while true:
-      let gdbOut = p.readOutput(10)
+      let gdbOut = p.readOutput(5)
 
       if gdbOut.len == 0: break
       outBuffer.add(gdbOut)
@@ -182,7 +182,7 @@ proc main() =
     
     # 2. Check GDB Stderr
     while true:
-      let gdbErr = p.readError(10)
+      let gdbErr = p.readError(5)
       if gdbErr.len == 0: break
       toStderr(gdbErr.strip(), debugStderrFileName)
     
