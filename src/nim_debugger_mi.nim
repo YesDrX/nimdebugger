@@ -1,9 +1,6 @@
-when not defined(windows):
-  import posix
-
 import std/[asyncdispatch, asyncfile, os, strformat, locks,os, strutils, times]
-import glob
-import symbol_map, mi_transformer, process
+import glob, subprocess
+import symbol_map, mi_transformer
 
 const BUFFER_SIZE = 8192
 
@@ -147,27 +144,25 @@ proc main() =
   createThread(stdinChanThread, stdinReader)
 
   # Start GDB process
-  var p: Process
-  try:
-    p = newProcess(arg.gdbPath, arg.gdbArgs)
-  except Exception as e:
-    toStderr("Failed to start Debugger: " & e.msg, debugStderrFileName)
-    quit(1)
-
-  if not p.isRunning:
-    toStderr("Failed to start Debugger process (not running)!", debugStderrFileName)
-    quit(1)
+  let p = subprocess.startSubprocess(
+    command = arg.gdbPath,
+    args    = arg.gdbArgs,
+    options = SubprocessOptions(
+      useStdin  : true,
+      useStdout : true,
+      useStderr : true
+    )
+  )
 
   var inBuffer = ""
   var outBuffer = ""
+  
   while true:
+  
     # 1. Check GDB Output
-    while true:
-      let gdbOut = p.readOutput(5)
-
-      if gdbOut.len == 0: break
+    while p.hasDataStdout:
+      let gdbOut = p.readStdout(timeoutMs = 5)
       outBuffer.add(gdbOut)
-
       while true:
         let nlPos = outBuffer.find('\n')
         if nlPos == -1: break
@@ -181,9 +176,8 @@ proc main() =
           toStdout(rawLine, debugStdoutFileName)
     
     # 2. Check GDB Stderr
-    while true:
-      let gdbErr = p.readError(5)
-      if gdbErr.len == 0: break
+    while p.hasDataStderr:
+      let gdbErr = p.readStderr(timeoutMs = 5)
       toStderr(gdbErr.strip(), debugStderrFileName)
     
     # 3. Read from stdin

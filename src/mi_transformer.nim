@@ -1,4 +1,24 @@
+{.passL: "-lstdc++".}
 import strutils, re, symbol_map, osproc
+
+# ----- Helpers -----
+proc cxa_demangle(
+  mangled: cstring,
+  output_buffer: cstring,
+  output_buffer_size: ptr csize_t,
+  status: ptr cint
+): cstring {.importc: "__cxa_demangle".}
+
+proc demangle(mangled: string): string =
+  var
+    status: cint = 0
+  
+  result = $cxa_demangle(
+              mangled.cstring,
+              nil,
+              nil,
+              status.addr
+            )
 
 # ----- Output Transformer -----
 
@@ -54,13 +74,9 @@ proc transformOutput*(line: string, sm: SymbolMap, debugger: string = "gdb", deb
       if debug:
         stderr.writeLine("Attempting C++ demangle of: " & demangled)
       try:
-        let (output, exitCode) = execCmdEx("c++filt -n " & demangled)
-        if exitCode == 0 and output.len > 0:
-          demangled = output.strip()
-          if debug:
-            stderr.writeLine("  -> Demangled to: " & demangled)
-        elif debug:
-          stderr.writeLine("  -> c++filt failed or returned empty")
+        demangled = demangle(demangled).strip()
+        if debug:
+          stderr.writeLine("  -> Demangled to: " & demangled)
       except Exception as e:
         if debug:
           stderr.writeLine("  -> c++filt exception: " & e.msg)

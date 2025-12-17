@@ -1,6 +1,6 @@
 # Package
 
-version       = "0.3.1"
+version       = "0.4.0"
 author        = "yesdrx"
 description   = "GDB/LLDB/MI proxy for Nim that handles symbol mangling/demangling"
 license       = "MIT"
@@ -11,6 +11,7 @@ bin           = @["nim_debugger_mi"]
 
 requires "nim >= 1.6.0"
 requires "glob >= 0.1.0"
+requires "subprocess >= 0.2.1"
 
 # Tasks
 
